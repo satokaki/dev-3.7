@@ -36,6 +36,7 @@ import {
   MENU_CATALOG,
   getDefaultPermissions,
   normalizePermissions,
+  hasPermission,
 } from '@/lib/permissions';
 
 const actionLabel = {
@@ -49,6 +50,7 @@ const actionLabel = {
   print: 'Cetak',
   download: 'Download',
   adjust: 'Adjust',
+  opening_balance: 'Saldo Awal',
   backup: 'Backup',
   backup_download: 'Download',
   restore: 'Restore',
@@ -400,6 +402,68 @@ export default function Settings() {
         u.id === selectedId
     ) || null;
 
+
+  const isCurrentAdmin =
+    currentUser?.role === 'admin';
+
+  const canViewUsers =
+    isCurrentAdmin ||
+    hasPermission(
+      currentUser,
+      'users',
+      'view'
+    );
+
+  const canCreateUsers =
+    isCurrentAdmin ||
+    hasPermission(
+      currentUser,
+      'users',
+      'create'
+    );
+
+  const canEditUsers =
+    isCurrentAdmin ||
+    hasPermission(
+      currentUser,
+      'users',
+      'edit'
+    );
+
+  const canDeleteUsers =
+    isCurrentAdmin ||
+    hasPermission(
+      currentUser,
+      'users',
+      'delete'
+    );
+
+  /*
+   * SECURITY:
+   * Manager/user non-admin tidak boleh mengubah Administrator,
+   * dan tidak boleh menaikkan role menjadi Administrator.
+   */
+  const selectedIsAdmin =
+    selectedUser?.role === 'admin';
+
+  const canManageSelected =
+    !!selectedUser &&
+    (
+      isCurrentAdmin ||
+      (
+        canEditUsers &&
+        !selectedIsAdmin
+      )
+    );
+
+  const assignableRoles =
+    isCurrentAdmin
+      ? ROLES
+      : ROLES.filter(
+          role =>
+            role.value !== 'admin'
+        );
+
   /* ========================================================
      HYDRATE SELECTED USER
   ======================================================== */
@@ -446,6 +510,18 @@ export default function Settings() {
   ======================================================== */
 
   const setRolePreset = (role) => {
+    if (
+      !isCurrentAdmin &&
+      role === 'admin'
+    ) {
+      toast({
+        variant: 'destructive',
+        title: 'Akses ditolak',
+        description: 'Hanya Administrator yang dapat menetapkan role Administrator.',
+      });
+      return;
+    }
+
     setEditForm(f => ({
       ...f,
       role,
@@ -636,6 +712,29 @@ export default function Settings() {
 
   const handleSave = async () => {
     if (!selectedUser) return;
+
+    if (!canManageSelected) {
+      toast({
+        variant: 'destructive',
+        title: 'Akses ditolak',
+        description: selectedIsAdmin
+          ? 'Administrator hanya dapat diubah oleh Administrator.'
+          : 'Anda tidak memiliki izin mengubah pengguna ini.',
+      });
+      return;
+    }
+
+    if (
+      !isCurrentAdmin &&
+      editForm.role === 'admin'
+    ) {
+      toast({
+        variant: 'destructive',
+        title: 'Akses ditolak',
+        description: 'Manager tidak dapat menaikkan pengguna menjadi Administrator.',
+      });
+      return;
+    }
 
     setSaving(true);
 
@@ -859,6 +958,27 @@ export default function Settings() {
         return;
       }
 
+      if (!canCreateUsers) {
+        toast({
+          variant: 'destructive',
+          title: 'Akses ditolak',
+          description: 'Anda tidak memiliki izin menambah pengguna.',
+        });
+        return;
+      }
+
+      if (
+        !isCurrentAdmin &&
+        inviteForm.role === 'admin'
+      ) {
+        toast({
+          variant: 'destructive',
+          title: 'Akses ditolak',
+          description: 'Manager tidak dapat mengundang Administrator.',
+        });
+        return;
+      }
+
       setSubmittingInvite(true);
 
       try {
@@ -956,6 +1076,21 @@ export default function Settings() {
     async () => {
       if (!deleteTarget) return;
 
+      if (
+        !canDeleteUsers ||
+        (
+          !isCurrentAdmin &&
+          deleteTarget.role === 'admin'
+        )
+      ) {
+        toast({
+          variant: 'destructive',
+          title: 'Akses ditolak',
+          description: 'Anda tidak memiliki izin menonaktifkan pengguna ini.',
+        });
+        return;
+      }
+
       setDeleting(true);
 
       try {
@@ -1027,9 +1162,6 @@ export default function Settings() {
       }
     };
 
-  const canDelete =
-    currentUser?.role ===
-    'admin';
 
   const menusByGroup =
     GROUP_ORDER
@@ -1111,8 +1243,7 @@ export default function Settings() {
         actions={
           <div className="flex items-center gap-2">
             {selectedUser &&
-              editForm.role !==
-                'admin' && (
+              canManageSelected && (
                 <Button
                   onClick={handleSave}
                   size="sm"
@@ -1128,7 +1259,7 @@ export default function Settings() {
                 </Button>
               )}
 
-            {canDelete && (
+            {canCreateUsers && (
               <Button
                 onClick={
                   openInvite
@@ -1247,7 +1378,8 @@ export default function Settings() {
                         </div>
                       </div>
 
-                      {canDelete &&
+                      {canDeleteUsers &&
+                        (isCurrentAdmin || u.role !== 'admin') &&
                         u.status !==
                           'inactive' &&
                         u.status !==
@@ -1311,6 +1443,9 @@ export default function Settings() {
                     onValueChange={
                       setRolePreset
                     }
+                    disabled={
+                      !canManageSelected
+                    }
                   >
                     <SelectTrigger className="h-8 w-[150px] text-[12.5px]">
                       <SelectValue />
@@ -1318,7 +1453,7 @@ export default function Settings() {
 
                     <SelectContent>
                       {
-                        ROLES.map(
+                        assignableRoles.map(
                           r => (
                             <SelectItem
                               key={
@@ -1343,6 +1478,9 @@ export default function Settings() {
                     <Select
                       value={
                         editForm.status
+                      }
+                      disabled={
+                        !canManageSelected
                       }
                       onValueChange={v =>
                         setEditForm(
@@ -1393,10 +1531,12 @@ export default function Settings() {
                     <div className="flex items-center gap-2">
                       <button
                         onClick={() =>
+                          canManageSelected &&
                           toggleAll(
                             true
                           )
                         }
+                        disabled={!canManageSelected}
                         className="text-[10.5px] px-2 py-1 border border-border rounded hover:bg-muted"
                       >
                         Aktifkan Semua
@@ -1404,10 +1544,12 @@ export default function Settings() {
 
                       <button
                         onClick={() =>
+                          canManageSelected &&
                           toggleAll(
                             false
                           )
                         }
+                        disabled={!canManageSelected}
                         className="text-[10.5px] px-2 py-1 border border-border rounded hover:bg-muted"
                       >
                         Kosongkan
@@ -1472,11 +1614,13 @@ export default function Settings() {
 
                                       <button
                                         onClick={() =>
+                                          canManageSelected &&
                                           toggleMenuAll(
                                             m.key,
                                             !allOn
                                           )
                                         }
+                                        disabled={!canManageSelected}
                                         className="text-[10px] text-primary hover:underline"
                                       >
                                         {
@@ -1503,11 +1647,13 @@ export default function Settings() {
                                                 ]
                                               }
                                               onCheckedChange={() =>
+                                                canManageSelected &&
                                                 togglePerm(
                                                   m.key,
                                                   a
                                                 )
                                               }
+                                              disabled={!canManageSelected}
                                               className="scale-75"
                                             />
 
@@ -1629,7 +1775,7 @@ export default function Settings() {
 
               <SelectContent>
                 {
-                  ROLES.map(
+                  assignableRoles.map(
                     r => (
                       <SelectItem
                         key={
