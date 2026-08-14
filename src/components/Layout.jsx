@@ -90,7 +90,7 @@ export default function Layout() {
   const hasRole = !!user?.role;
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-50">
+    <div className="flex h-screen overflow-hidden bg-background">
       {/* Sidebar */}
       <aside
         className={cn(
@@ -98,14 +98,14 @@ export default function Layout() {
           sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         )}
       >
-        <div className="h-14 flex items-center px-4 border-b border-sidebar-border shrink-0">
+        <div className="h-14 flex items-center px-4 border-b border-sidebar-border shrink-0 text-sidebar-foreground">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-md bg-primary flex items-center justify-center">
               <FlaskConical className="w-4 h-4 text-primary-foreground" />
             </div>
             <div>
               <div className="font-heading font-bold text-[15px] leading-none tracking-tight">IZZI JUICE</div>
-              <div className="text-[10px] text-muted-foreground mt-0.5">E-Liquid Management</div>
+              <div className="text-[10px] text-sidebar-foreground/60 mt-0.5">E-Liquid Management</div>
             </div>
           </div>
         </div>
@@ -197,7 +197,7 @@ export default function Layout() {
       {/* Main */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Topbar */}
-        <header className="h-14 border-b border-border bg-white flex items-center px-4 gap-3 shrink-0">
+        <header className="h-14 border-b border-border bg-card/95 backdrop-blur-sm flex items-center px-4 gap-3 shrink-0">
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
             className="lg:hidden p-1.5 hover:bg-muted rounded-md"
@@ -211,7 +211,7 @@ export default function Layout() {
               <input
                 type="text"
                 placeholder="Cari..."
-                className="w-full h-9 pl-9 pr-3 text-[13px] bg-muted/60 border border-transparent rounded-md focus:bg-white focus:border-border outline-none transition-colors"
+                className="w-full h-9 pl-9 pr-3 text-[13px] bg-muted/70 border border-transparent rounded-md focus:bg-card focus:border-primary/30 focus:ring-2 focus:ring-primary/10 outline-none transition-colors"
               />
             </div>
           </div>
