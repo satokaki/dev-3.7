@@ -47,6 +47,16 @@ async function triggerDownload(signedUrl, fileName) {
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
+const makeBackupDownloadName = (name, fallback = 'LABPRO_BACKUP') => {
+  const safeName = String(name || fallback)
+    .trim()
+    .replace(/[<>:"/\\|?*]+/g, '-')
+    .replace(/\s+/g, '_')
+    .replace(/_+/g, '_');
+
+  return `${safeName || fallback}.json`;
+};
+
 const ACTIVE_RESTORE_STORAGE_KEY = 'labpro_active_restore_session';
 const MAX_NETWORK_RETRIES = 5;
 const NETWORK_RETRY_DELAYS = [1000, 2000, 4000, 8000, 12000];
@@ -279,11 +289,20 @@ export default function DatabaseManagement() {
           backup_id: backup.id,
         });
 
-        await triggerDownload(dl.data.signed_url, dl.data.file_name);
+        const downloadFileName =
+          makeBackupDownloadName(
+            bkName,
+            backup?.backup_code || 'LABPRO_BACKUP'
+          );
+
+        await triggerDownload(
+          dl.data.signed_url,
+          downloadFileName
+        );
 
         toast({
           title: 'File terunduh',
-          description: dl.data.file_name,
+          description: downloadFileName,
         });
       } catch (error) {
         toast({
