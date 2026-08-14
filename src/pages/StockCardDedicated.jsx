@@ -138,16 +138,49 @@ export default function StockCardDedicated() {
   const selectedItem = mode === 'batch' ? product : selectedMaterial;
   const selectedUnit = unitLabel(mode === 'batch' ? product?.unit : selectedMaterial?.unit);
 
-  const rows = useMemo(() => ledger
+  // Ambil seluruh histori item/batch sampai dateTo terlebih dahulu.
+  // Running balance TIDAK boleh bergantung pada balance_quantity StockLedger,
+  // karena field tersebut dapat 0/kosong pada data restore/ledger lama.
+  const selectedHistoryUntilDate = useMemo(() => ledger
     .filter(row => mode === 'batch'
       ? row.item_type === 'product' && row.batch_number === selectedBatch?.batch_number
       : row.item_type === 'material' && row.item_id === selectedId)
     .filter(row => {
       const day = (row.transaction_date || row.created_date || '').slice(0, 10);
-      return (!dateFrom || day >= dateFrom) && (!dateTo || day <= dateTo);
+      return !dateTo || day <= dateTo;
+    })
+    .sort((a, b) => String(a.transaction_date || a.created_date).localeCompare(String(b.transaction_date || b.created_date))),
+  [ledger, mode, selectedId, selectedBatch?.batch_number, dateTo]);
+
+  const historyWithRunningBalance = useMemo(() => {
+    const running = {};
+    return selectedHistoryUntilDate.map(row => {
+      // Saldo dipisah per stage. Ini penting untuk batch produksi karena BULK,
+      // READY_FOR_LABELING, UNEXCISED, dan READY_FOR_SALE adalah stok berbeda.
+      // Untuk material, inventory_status kosong dinormalisasi agar konsisten.
+      const stage = row.inventory_status ||
+        (row.item_type === 'material' ? 'RAW_MATERIAL' : '');
+      const key = `${row.item_id || ''}|${row.batch_number || ''}|${stage}`;
+      const delta =
+        Number(row.quantity_in || 0) -
+        Number(row.quantity_out || 0);
+
+      running[key] = (running[key] || 0) + delta;
+
+      return {
+        ...row,
+        running_balance: running[key],
+      };
+    });
+  }, [selectedHistoryUntilDate]);
+
+  const rows = useMemo(() => historyWithRunningBalance
+    .filter(row => {
+      const day = (row.transaction_date || row.created_date || '').slice(0, 10);
+      return !dateFrom || day >= dateFrom;
     })
     .sort((a, b) => String(b.transaction_date || b.created_date).localeCompare(String(a.transaction_date || a.created_date))),
-  [ledger, mode, selectedId, selectedBatch?.batch_number, dateFrom, dateTo]);
+  [historyWithRunningBalance, dateFrom]);
 
   const batchHistoryRows = useMemo(() => selectedBatch ? ledgerUntilDate(selectedBatch) : [], [selectedBatch, ledgerUntilDate]);
   const historicalBatchBalances = useMemo(() => Object.values(batchHistoryRows.reduce((acc, row) => {
@@ -183,7 +216,16 @@ export default function StockCardDedicated() {
   const outgoingUnits = new Set(rows.filter(r => Number(r.quantity_out || 0) !== 0).map(r => movementUnit(r, selectedUnit)));
   const totalInUnit = incomingUnits.size === 1 ? [...incomingUnits][0] : (incomingUnits.size > 1 ? 'campuran' : selectedUnit);
   const totalOutUnit = outgoingUnits.size === 1 ? [...outgoingUnits][0] : (outgoingUnits.size > 1 ? 'campuran' : selectedUnit);
-  const opening = rows.length ? Number(rows[rows.length - 1].balance_quantity || 0) - Number(rows[rows.length - 1].quantity_in || 0) + Number(rows[rows.length - 1].quantity_out || 0) : 0;
+  // Ringkasan periode memakai delta histori sebelum dateFrom.
+  // Untuk mode material seluruh stage dijumlahkan. Untuk batch, unit antar-stage
+  // dapat berbeda sehingga ringkasan ini tetap mengikuti movement yang sedang tampil.
+  const opening = useMemo(() => {
+    if (!dateFrom) return 0;
+    return selectedHistoryUntilDate
+      .filter(row => (row.transaction_date || row.created_date || '').slice(0, 10) < dateFrom)
+      .reduce((sum, row) =>
+        sum + Number(row.quantity_in || 0) - Number(row.quantity_out || 0), 0);
+  }, [selectedHistoryUntilDate, dateFrom]);
   const bottlingIn = batchHistoryRows.filter(row => row.transaction_type === 'bottling_output').reduce((sum, row) => sum + Number(row.quantity_in || 0), 0) -
     batchHistoryRows.filter(row => row.transaction_type === 'bottling_reversal' && row.inventory_status === 'READY_FOR_LABELING').reduce((sum, row) => sum + Number(row.quantity_out || 0), 0);
   const salesOut = batchHistoryRows.filter(row => row.transaction_type === 'sales').reduce((sum, row) => sum + Number(row.quantity_out || 0), 0) -
@@ -217,7 +259,7 @@ export default function StockCardDedicated() {
     date: localDate(row.transaction_date || row.created_date), number: row.transaction_number || '',
     type: TYPE_LABEL[row.transaction_type] || row.transaction_type, warehouse: row.warehouse_name || '',
     batch: row.batch_number || '', in: row.quantity_in || 0, out: row.quantity_out || 0,
-    balance: row.balance_quantity ?? '', unit: movementUnit(row, selectedUnit), notes: row.notes || '',
+    balance: row.running_balance ?? 0, unit: movementUnit(row, selectedUnit), notes: row.notes || '',
   }));
 
   const exportCSV = () => {
@@ -246,7 +288,7 @@ export default function StockCardDedicated() {
     { key: 'warehouse_name', header: 'Gudang' }, { key: 'batch_number', header: 'Batch', className: 'font-mono' },
     { key: 'quantity_in', header: 'Masuk', render: r => r.quantity_in ? <span className="font-semibold text-emerald-600">{qty(r.quantity_in)}</span> : '—' },
     { key: 'quantity_out', header: 'Keluar', render: r => r.quantity_out ? <span className="font-semibold text-red-500">{qty(r.quantity_out)}</span> : '—' },
-    { key: 'balance_quantity', header: 'Saldo', render: r => <span className="font-semibold">{qty(r.balance_quantity)}</span> },
+    { key: 'running_balance', header: 'Saldo', render: r => <span className="font-semibold">{qty(r.running_balance)}</span> },
     { key: 'unit', header: 'Satuan', render: r => movementUnit(r, selectedUnit) }, { key: 'notes', header: 'Keterangan' },
   ];
 
