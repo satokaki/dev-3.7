@@ -691,11 +691,11 @@ export default function Dashboard() {
 
       <div className="mb-5">
         <h1 className="font-heading text-xl font-bold tracking-tight">
-          Dashboard — LAB PRO v3.6.1 LIVE
+          Dashboard — LAB PRO v3.7 DEV
         </h1>
 
         <p className="text-[13px] text-muted-foreground mt-0.5">
-          LAB PRO · FINAL / OPERATIONAL LIVE
+          LAB PRO · DEV 3.7 · TESTING / DEVELOPING
         </p>
       </div>
 
@@ -1133,12 +1133,12 @@ export default function Dashboard() {
               </div>
             )}
 
-            {/* LIVE 3.6.1 INFO */}
+            {/* DEV 3.7 INFO */}
             <div className="bg-white border border-border rounded-lg p-4">
 
               <h2 className="text-[13px] font-bold mb-3 flex items-center gap-1.5">
                 <Users className="w-4 h-4" />
-                LAB PRO v3.6.1 — LIVE
+                LAB PRO v3.7 — DEV
               </h2>
 
               <div className="space-y-3 text-[12px] text-muted-foreground">
@@ -1148,14 +1148,14 @@ export default function Dashboard() {
                     <span className="font-medium text-foreground">
                       Sistem:
                     </span>
-                    {' '}LAB PRO v3.6.1 LIVE
+                    {' '}LAB PRO v3.7 DEV
                   </p>
 
                   <p className="mt-1">
                     <span className="font-medium text-foreground">
                       Status:
                     </span>
-                    {' '}FINAL / OPERATIONAL LIVE
+                    {' '}DEVELOPMENT / MAJOR FEATURE TESTING
                   </p>
                 </div>
 
@@ -1163,7 +1163,7 @@ export default function Dashboard() {
                 <div className="pt-3 border-t border-border">
 
                   <p className="font-semibold text-foreground mb-2">
-                    Update LIVE v3.6.1
+                    DEV v3.7 — Testing & Development
                   </p>
 
                   <ul className="space-y-2">
@@ -1180,7 +1180,7 @@ export default function Dashboard() {
 
                         <p className="mt-0.5">
                           Modul pencatatan biaya operasional dan loss
-                          perusahaan tersedia dalam alur LIVE v3.6.1.
+                          perusahaan tersedia dalam alur DEV v3.7.
                         </p>
                       </div>
                     </li>
@@ -1238,7 +1238,7 @@ export default function Dashboard() {
                         </p>
 
                         <p className="mt-1 text-emerald-800">
-                          Migrasi database LAB PRO v3.5 ke LIVE v3.6.1
+                          Baseline database berasal dari LIVE v3.6.1
                           berhasil diselesaikan dan diverifikasi identik.
                         </p>
                       </div>
@@ -1293,11 +1293,11 @@ export default function Dashboard() {
                 <div className="pt-3 border-t border-border">
 
                   <p className="text-emerald-700 font-medium">
-                    ✓ LAB PRO v3.6.1 merupakan versi LIVE operasional.
+                    ✓ LAB PRO v3.7 merupakan environment DEV untuk testing dan pengembangan major feature.
                   </p>
 
                   <p className="mt-1 text-[11px] text-muted-foreground">
-                    LIVE v3.6.1 membawa major update pada database
+                    DEV v3.7 digunakan untuk pengembangan major feature dengan baseline LIVE v3.6.1 pada database
                     restore engine, operational cost, ketahanan jaringan,
                     transparansi progress, dan integritas migrasi data.
                   </p>
