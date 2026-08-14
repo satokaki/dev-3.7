@@ -159,6 +159,14 @@ export default function StockCard() {
   const { user } = useAuth();
   // SECURITY: HPP/Nominal hanya boleh terlihat oleh Admin atau user dengan permission HPP view.
   const canViewHpp = user?.role === 'admin' || hasPermission(user, 'hpp', 'view');
+
+  // ACCESS PATCH v3.7:
+  // Base44 Administrator remains super-admin/full access.
+  // Manager/other application roles follow granular Kartu Stok permissions.
+  const canOpeningBalance =
+    user?.role === 'admin' || hasPermission(user, 'stock_card', 'opening_balance');
+  const canAdjustStock =
+    user?.role === 'admin' || hasPermission(user, 'stock_card', 'adjust');
   const [data, setData] = useState([]);
   const [balances, setBalances] = useState([]);
   const [warehouses, setWarehouses] = useState([]);
@@ -246,6 +254,14 @@ export default function StockCard() {
     setAdjustOpen(true);
   };
   const submitAdjustment = async () => {
+    if (!canAdjustStock) {
+      toast({
+        variant: 'destructive',
+        title: 'Tidak memiliki akses Koreksi Stok',
+        description: 'Minta Administrator mengaktifkan permission Kartu Stok → Adjust.',
+      });
+      return;
+    }
     const balance = selectedBalance;
     const qty = Number(adjustForm.quantity) || 0;
     if (!balance) {
@@ -342,7 +358,8 @@ export default function StockCard() {
   };
   /* =========================================================
      OPENING BALANCE / SALDO AWAL
-     ADMIN ONLY.
+     Administrator = full access.
+     Role lain mengikuti permission stock_card.opening_balance.
      Untuk stok fisik yang sudah ada sebelum implementasi LAB PRO.
   ========================================================= */
   const openingItems = useMemo(() => {
@@ -381,8 +398,12 @@ export default function StockCard() {
     setOpeningForm(f => ({ ...f, item_type: value, item_id: '', inventory_status: value === 'material' ? 'RAW_MATERIAL' : 'READY_FOR_SALE', quantity: '', unit_cost: '', batch_number: '' }));
   };
   const submitOpeningBalance = async () => {
-    if (user?.role !== 'admin') {
-      toast({ variant: 'destructive', title: 'Opening Balance hanya dapat diposting Administrator' });
+    if (!canOpeningBalance) {
+      toast({
+        variant: 'destructive',
+        title: 'Tidak memiliki akses Saldo Awal',
+        description: 'Minta Administrator mengaktifkan permission Kartu Stok → Saldo Awal.',
+      });
       return;
     }
     const item = selectedOpeningItem;
@@ -578,10 +599,12 @@ export default function StockCard() {
         description="Mutasi persediaan berdasarkan stock ledger"
         actions={
           <div className="flex items-center gap-2 flex-wrap">
-            {user?.role === 'admin' && (
+            {canOpeningBalance && (
               <Button onClick={openOpeningBalance} size="sm" variant="outline" className="gap-1.5"><DatabaseZap className="w-4 h-4" />Saldo Awal</Button>
             )}
-            <Button onClick={openAdjustment} size="sm" className="gap-1.5"><Plus className="w-4 h-4" />Koreksi Stok</Button>
+            {canAdjustStock && (
+              <Button onClick={openAdjustment} size="sm" className="gap-1.5"><Plus className="w-4 h-4" />Koreksi Stok</Button>
+            )}
             <Button onClick={exportCSV} size="sm" variant="outline" className="gap-1.5"><Download className="w-4 h-4" />Export CSV</Button>
             <PdfButton onExport={exportPDF} />
           </div>
