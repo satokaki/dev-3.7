@@ -28,7 +28,7 @@ function KpiCard({ icon: Icon, label, value, color, onClick }) {
   return (
     <div
       onClick={onClick}
-      className={`bg-white border border-border rounded-lg p-3.5 ${
+      className={`bg-card border border-border rounded-xl p-3.5 shadow-sm ${
         onClick
           ? 'cursor-pointer hover:border-primary/40 hover:shadow-sm transition-all'
           : ''
@@ -59,7 +59,7 @@ function QuickAction({ icon: Icon, label, path, color }) {
   return (
     <button
       onClick={() => navigate(path)}
-      className="flex items-center gap-2.5 px-3 py-2.5 bg-white border border-border rounded-lg hover:border-primary/40 hover:shadow-sm transition-all text-left w-full"
+      className="flex items-center gap-2.5 px-3 py-2.5 bg-card border border-border rounded-xl shadow-sm hover:border-primary/40 hover:shadow-md transition-all text-left w-full"
     >
       <div className={`w-8 h-8 rounded-md flex items-center justify-center ${color}`}>
         <Icon className="w-4 h-4" />
@@ -977,7 +977,7 @@ export default function Dashboard() {
         <div className={isAdmin ? 'lg:col-span-2' : 'lg:col-span-3'}>
 
           {quickActions.length > 0 && (
-            <div className="bg-white border border-border rounded-lg p-4">
+            <div className="bg-card border border-border rounded-lg p-4">
 
               <h2 className="text-[13px] font-bold mb-3 flex items-center gap-1.5">
                 <Activity className="w-4 h-4" />
@@ -998,7 +998,7 @@ export default function Dashboard() {
 
           {access.dashboardActivity && (
             <div
-              className={`bg-white border border-border rounded-lg p-4 ${
+              className={`bg-card border border-border rounded-lg p-4 ${
                 quickActions.length > 0
                   ? 'mt-4'
                   : ''
@@ -1067,7 +1067,7 @@ export default function Dashboard() {
 
           {!isAdmin &&
             operationalStatus.length > 0 && (
-              <div className="bg-white border border-border rounded-lg p-4 mt-4">
+              <div className="bg-card border border-border rounded-lg p-4 mt-4">
 
                 <h2 className="text-[13px] font-bold mb-3">
                   Status Operasional
@@ -1103,7 +1103,7 @@ export default function Dashboard() {
           <div className="space-y-4">
 
             {operationalStatus.length > 0 && (
-              <div className="bg-white border border-border rounded-lg p-4">
+              <div className="bg-card border border-border rounded-lg p-4">
 
                 <h2 className="text-[13px] font-bold mb-3">
                   Status Operasional
@@ -1134,7 +1134,7 @@ export default function Dashboard() {
             )}
 
             {/* DEV 3.7 INFO */}
-            <div className="bg-white border border-border rounded-lg p-4">
+            <div className="bg-card border border-border rounded-lg p-4">
 
               <h2 className="text-[13px] font-bold mb-3 flex items-center gap-1.5">
                 <Users className="w-4 h-4" />
