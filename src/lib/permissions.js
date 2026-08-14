@@ -92,7 +92,7 @@ export const MENU_CATALOG = [
   },
 
   /**
-   * SECURITY PATCH Ã¢â‚¬â€ Production Download Permission
+   * SECURITY PATCH Ã¢â‚¬â€  Production Download Permission
    *
    * `view` dan `download` dipisahkan.
    *
@@ -222,7 +222,11 @@ export const MENU_CATALOG = [
     key: 'stock_card',
     label: 'Kartu Stok',
     group: 'operasional',
-    actions: ['view']
+    actions: [
+      'view',
+      'opening_balance',
+      'adjust'
+    ]
   },
 
   {
@@ -599,6 +603,12 @@ const OPERATOR_DEFAULTS = {
   },
 
   stock_card: {
+    view: true,
+    opening_balance: false,
+    adjust: false
+  },
+
+  stock_card_detail: {
     view: true
   },
 
@@ -655,6 +665,48 @@ const OPERATOR_DEFAULTS = {
   settings: {
     view: false
   },
+};
+
+
+/**
+ * ============================================================
+ * MANAGER DEFAULT
+ * ============================================================
+ *
+ * Manager adalah role operasional tingkat tinggi.
+ * BUKAN Administrator Base44 dan tidak mendapat admin bypass.
+ *
+ * Default:
+ * - memakai baseline Operator
+ * - boleh Saldo Awal dan Koreksi Stok
+ * - boleh membuka Settings & Manajemen Pengguna
+ * - tidak boleh menghapus user secara default
+ * - seluruh permission tetap bisa dicustom oleh Administrator
+ */
+
+const MANAGER_DEFAULTS = {
+  ...OPERATOR_DEFAULTS,
+
+  stock_card: {
+    view: true,
+    opening_balance: true,
+    adjust: true
+  },
+
+  stock_card_detail: {
+    view: true
+  },
+
+  users: {
+    view: true,
+    create: true,
+    edit: true,
+    delete: false
+  },
+
+  settings: {
+    view: true
+  }
 };
 
 /**
@@ -986,6 +1038,7 @@ const BREWER_DEFAULTS = {
 };
 
 const ROLE_DEFAULTS = {
+  manager: MANAGER_DEFAULTS,
   user: OPERATOR_DEFAULTS,
   sales: SALES_DEFAULTS,
   production_head: PRODUCTION_HEAD_DEFAULTS,
@@ -1542,5 +1595,3 @@ export function isRecipeFormulaHidden(
       'ADMIN_ONLY'
   );
 }
-
-
