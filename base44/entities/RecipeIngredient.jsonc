@@ -1,0 +1,82 @@
+{
+  "name": "RecipeIngredient",
+  "type": "object",
+  "properties": {
+    "recipe_id": {
+      "type": "string",
+      "description": "ID resep"
+    },
+    "material_id": {
+      "type": "string",
+      "description": "ID bahan"
+    },
+    "material_name": {
+      "type": "string"
+    },
+    "material_type": {
+      "type": "string",
+      "enum": [
+        "flavor",
+        "propylene_glycol",
+        "vegetable_glycerin",
+        "nicotine",
+        "sweetener",
+        "cooling",
+        "additive",
+        "premix",
+        "lainnya"
+      ],
+      "description": "Jenis bahan fungsional (premix = bahan setengah jadi)"
+    },
+    "is_premix": {
+      "type": "boolean",
+      "default": false,
+      "description": "True jika ingredient ini adalah bahan premix"
+    },
+    "percentage": {
+      "type": "number",
+      "description": "Persentase (%) sesuai calculation_basis resep"
+    },
+    "calculation_basis": {
+      "type": "string",
+      "enum": [
+        "W_W",
+        "W_V",
+        "V_V"
+      ],
+      "description": "Override basis perhitungan per ingredient (opsional)"
+    },
+    "density": {
+      "type": "number",
+      "description": "Density bahan"
+    },
+    "pg_content": {
+      "type": "number",
+      "description": "Kandungan PG (%)"
+    },
+    "vg_content": {
+      "type": "number",
+      "description": "Kandungan VG (%)"
+    },
+    "nicotine_strength": {
+      "type": "number",
+      "description": "Kekuatan nicotine (mg/ml)"
+    },
+    "concentration_value": {
+      "type": "number",
+      "description": "Konsentrasi premix (snapshot)"
+    },
+    "mix_order": {
+      "type": "integer",
+      "description": "Urutan pencampuran"
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "recipe_id",
+    "material_id",
+    "percentage"
+  ]
+}

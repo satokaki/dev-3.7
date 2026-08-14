@@ -1,0 +1,143 @@
+{
+  "name": "Material",
+  "type": "object",
+  "properties": {
+    "code": {
+      "type": "string",
+      "description": "Kode barang, unik"
+    },
+    "name": {
+      "type": "string",
+      "description": "Nama barang"
+    },
+    "category_id": {
+      "type": "string",
+      "description": "ID kategori barang"
+    },
+    "category_name": {
+      "type": "string"
+    },
+    "specification": {
+      "type": "string",
+      "description": "Spesifikasi/label visual singkat (mis. 'Cair', '60ml', 'Premix', 'Kering'). Dipakai untuk dibaca operator, bukan untuk matching kompatibilitas."
+    },
+    "supplier_id": {
+      "type": "string",
+      "description": "ID supplier utama"
+    },
+    "supplier_name": {
+      "type": "string"
+    },
+    "material_type": {
+      "type": "string",
+      "enum": [
+        "RAW_MATERIAL",
+        "PREMIX",
+        "PACKAGING",
+        "LABEL",
+        "STICKER",
+        "BOTTLE",
+        "CONSUMABLE",
+        "EXCISE",
+        "FINISHED_GOOD"
+      ],
+      "default": "RAW_MATERIAL",
+      "description": "Klasifikasi struktural: menentukan scope kategori yang tersedia, dan menjaga item packaging tidak masuk ke picker bahan resep. Akan digantikan oleh Mapping di fase 2."
+    },
+    "is_internally_produced": {
+      "type": "boolean",
+      "default": false,
+      "description": "Diproduksi internal (true untuk PREMIX)"
+    },
+    "is_recipe_ingredient": {
+      "type": "boolean",
+      "default": true,
+      "description": "Boleh dipilih sebagai ingredient resep."
+    },
+    "concentration_value": {
+      "type": "number",
+      "description": "Nilai konsentrasi (mis. 10 untuk 10%)"
+    },
+    "concentration_unit": {
+      "type": "string",
+      "enum": [
+        "PERCENT_WW",
+        "PERCENT_WV",
+        "PERCENT_VV"
+      ],
+      "description": "Satuan konsentrasi premix"
+    },
+    "carrier_material_id": {
+      "type": "string",
+      "description": "ID bahan carrier (mis. PG)"
+    },
+    "carrier_material_name": {
+      "type": "string"
+    },
+    "default_density": {
+      "type": "number",
+      "description": "Density default (gram/ml) hasil premix"
+    },
+    "material_category": {
+      "type": "string",
+      "enum": [
+        "flavor",
+        "propylene_glycol",
+        "vegetable_glycerin",
+        "nicotine",
+        "sweetener",
+        "cooling",
+        "additive",
+        "premix",
+        "lainnya"
+      ],
+      "description": "Jenis bahan fungsional"
+    },
+    "unit": {
+      "type": "string",
+      "enum": [
+        "gram",
+        "mililiter",
+        "unit",
+        "pcs"
+      ],
+      "default": "gram"
+    },
+    "density": {
+      "type": "number",
+      "description": "Density gram per ml"
+    },
+    "pg_content": {
+      "type": "number",
+      "description": "Kandungan PG (%)"
+    },
+    "vg_content": {
+      "type": "number",
+      "description": "Kandungan VG (%)"
+    },
+    "nicotine_strength": {
+      "type": "number",
+      "description": "Kekuatan nicotine (mg/ml) jika bahan nicotine base"
+    },
+    "min_stock": {
+      "type": "number",
+      "default": 0
+    },
+    "last_purchase_price": {
+      "type": "number",
+      "default": 0
+    },
+    "is_active": {
+      "type": "boolean",
+      "default": true
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "code",
+    "name",
+    "unit"
+  ]
+}

@@ -1,0 +1,120 @@
+{
+  "name": "DatabaseBackup",
+  "type": "object",
+  "properties": {
+    "backup_code": {
+      "type": "string",
+      "description": "Kode backup unik (BKP-YYYYMMDD-00001)"
+    },
+    "backup_name": {
+      "type": "string",
+      "description": "Nama backup"
+    },
+    "storage_path": {
+      "type": "string",
+      "description": "file_uri pada private storage"
+    },
+    "file_name": {
+      "type": "string",
+      "description": "Nama file download (LABPRO_BACKUP_YYYY-MM-DD_HHMMSS.json)"
+    },
+    "file_size": {
+      "type": "number",
+      "default": 0,
+      "description": "Ukuran file backup (bytes)"
+    },
+    "checksum": {
+      "type": "string",
+      "description": "SHA-256 checksum payload tables"
+    },
+    "schema_version": {
+      "type": "string"
+    },
+    "app_version": {
+      "type": "string"
+    },
+    "environment": {
+      "type": "string",
+      "enum": [
+        "development",
+        "staging",
+        "production"
+      ],
+      "default": "development"
+    },
+    "record_count": {
+      "type": "number",
+      "default": 0
+    },
+    "table_count": {
+      "type": "number",
+      "default": 0
+    },
+    "backup_type": {
+      "type": "string",
+      "enum": [
+        "data_only",
+        "operational",
+        "full"
+      ],
+      "default": "operational",
+      "description": "Jenis backup: data_only (master, resep, mapping, konfigurasi tanpa transaksi/stok), operational (data operasional lengkap tanpa user/auth), atau full (termasuk User export-only)"
+    },
+    "encrypted": {
+      "type": "boolean",
+      "default": false,
+      "description": "Apakah file backup dienkripsi (AES-GCM)"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "CREATING",
+        "COMPLETED",
+        "FAILED",
+        "DELETED"
+      ],
+      "default": "CREATING"
+    },
+    "created_by": {
+      "type": "string",
+      "description": "Email/id admin pembuat"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "completed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "backup_code",
+    "status"
+  ],
+  "rls": {
+    "read": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "create": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "update": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "admin"
+      }
+    }
+  }
+}

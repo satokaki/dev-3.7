@@ -1,0 +1,59 @@
+{
+  "name": "User",
+  "type": "object",
+  "properties": {
+    "role": {
+      "type": "string",
+      "enum": [
+        "admin",
+        "user"
+      ],
+      "default": "user"
+    },
+    "user_code": {
+      "type": "string",
+      "description": "Kode pengguna (auto: USR-00001)"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "inactive",
+        "suspended",
+        "deleted"
+      ],
+      "default": "active",
+      "description": "Status akses pengguna"
+    },
+    "permissions": {
+      "type": "object",
+      "description": "Matriks hak akses per menu/aksi"
+    },
+    "last_login_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Waktu login terakhir"
+    },
+    "deleted_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Waktu soft delete"
+    },
+    "deleted_by": {
+      "type": "string",
+      "description": "Email admin yang menonaktifkan"
+    },
+    "delete_reason": {
+      "type": "string",
+      "description": "Alasan penonaktifan/penghapusan"
+    }
+  },
+  "required": [
+    "user_code",
+    "permissions",
+    "last_login_at",
+    "deleted_at",
+    "deleted_by",
+    "delete_reason"
+  ]
+}

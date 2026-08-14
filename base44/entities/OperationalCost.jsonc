@@ -1,0 +1,78 @@
+{
+  "name": "OperationalCost",
+  "type": "object",
+  "properties": {
+    "code": {
+      "type": "string",
+      "description": "Kode unik operational cost"
+    },
+    "cost_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Tanggal biaya atau kerugian"
+    },
+    "cost_type": {
+      "type": "string",
+      "enum": [
+        "COST",
+        "LOSS"
+      ],
+      "description": "Jenis biaya: biaya operasional atau kerugian"
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "UTILITY",
+        "MAINTENANCE",
+        "LABOR",
+        "TRANSPORT",
+        "PRODUCTION_LOSS",
+        "INVENTORY_LOSS",
+        "DAMAGE",
+        "OTHER"
+      ],
+      "description": "Kategori biaya atau kerugian"
+    },
+    "description": {
+      "type": "string",
+      "description": "Deskripsi biaya atau kerugian"
+    },
+    "amount": {
+      "type": "number",
+      "description": "Nilai biaya dalam Rupiah"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Catatan tambahan"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "ACTIVE",
+        "VOID"
+      ],
+      "description": "Status transaksi"
+    },
+    "source_type": {
+      "type": "string",
+      "description": "Sumber transaksi, misalnya MANUAL atau STOCK_ADJUSTMENT"
+    },
+    "source_id": {
+      "type": "string",
+      "description": "ID entity sumber jika transaksi dibuat otomatis"
+    },
+    "created_by_id": {
+      "type": "string"
+    },
+    "created_by_name": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "cost_date",
+    "cost_type",
+    "category",
+    "description",
+    "amount"
+  ]
+}

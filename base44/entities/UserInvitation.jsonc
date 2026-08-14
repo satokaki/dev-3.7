@@ -1,0 +1,84 @@
+{
+  "name": "UserInvitation",
+  "type": "object",
+  "properties": {
+    "email": {
+      "type": "string",
+      "description": "Email undangan (lowercase, normalized)"
+    },
+    "full_name": {
+      "type": "string",
+      "description": "Nama lengkap calon pengguna"
+    },
+    "role": {
+      "type": "string",
+      "enum": [
+        "admin",
+        "user"
+      ],
+      "default": "user",
+      "description": "Role yang diberikan saat login pertama"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "accepted",
+        "cancelled"
+      ],
+      "default": "pending",
+      "description": "Status undangan"
+    },
+    "permissions": {
+      "type": "object",
+      "description": "Hak akses per menu (untuk user tanpa record User)"
+    },
+    "invited_by": {
+      "type": "string",
+      "description": "Nama/email admin pengundang"
+    },
+    "accepted_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "user_code": {
+      "type": "string",
+      "description": "Kode user auto-generated saat diterima"
+    },
+    "auth_user_id": {
+      "type": "string",
+      "description": "ID auth user, terhubung saat login pertama"
+    },
+    "last_login_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Waktu login terakhir (untuk user tanpa record User)"
+    }
+  },
+  "required": [
+    "email",
+    "role"
+  ],
+  "rls": {
+    "read": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "create": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "update": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "admin"
+      }
+    }
+  }
+}

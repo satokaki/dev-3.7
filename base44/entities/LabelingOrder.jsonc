@@ -1,0 +1,90 @@
+{
+  "name": "LabelingOrder",
+  "type": "object",
+  "properties": {
+    "labeling_number": {
+      "type": "string",
+      "description": "Nomor labeling, unik"
+    },
+    "brand_id": {
+      "type": "string"
+    },
+    "brand_name": {
+      "type": "string"
+    },
+    "product_id": {
+      "type": "string"
+    },
+    "product_name": {
+      "type": "string"
+    },
+    "batch_id": {
+      "type": "string"
+    },
+    "batch_number": {
+      "type": "string"
+    },
+    "bottle_size": {
+      "type": "number"
+    },
+    "quantity": {
+      "type": "integer",
+      "description": "Jumlah barang dilabeli"
+    },
+    "label_type": {
+      "type": "string",
+      "description": "Jenis label (legacy / snapshot nama label utama)"
+    },
+    "label_item_id": {
+      "type": "string",
+      "description": "ID item label utama (snapshot; detail multi-label di LabelingMaterial)"
+    },
+    "label_item_code": {
+      "type": "string"
+    },
+    "label_item_name": {
+      "type": "string"
+    },
+    "label_quantity_per_unit": {
+      "type": "number",
+      "default": 1,
+      "description": "Kebutuhan label utama per unit produk"
+    },
+    "label_total_required": {
+      "type": "number",
+      "description": "Total kebutuhan label utama (qty \u00d7 per_unit)"
+    },
+    "label_color": {
+      "type": "string"
+    },
+    "label_model": {
+      "type": "string"
+    },
+    "operator": {
+      "type": "string"
+    },
+    "labeling_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "diproses",
+        "selesai",
+        "belum_cukai",
+        "dibatalkan"
+      ],
+      "default": "draft"
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "labeling_date",
+    "quantity",
+    "status"
+  ]
+}

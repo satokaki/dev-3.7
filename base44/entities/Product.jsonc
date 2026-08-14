@@ -1,0 +1,89 @@
+{
+  "name": "Product",
+  "type": "object",
+  "properties": {
+    "code": {
+      "type": "string",
+      "description": "Kode barang (auto-generate: BRG-KAT-00001), unik"
+    },
+    "sku": {
+      "type": "string",
+      "description": "SKU"
+    },
+    "barcode": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string",
+      "description": "Nama barang"
+    },
+    "brand_id": {
+      "type": "string",
+      "description": "ID merk"
+    },
+    "brand_name": {
+      "type": "string"
+    },
+    "category_id": {
+      "type": "string"
+    },
+    "category_name": {
+      "type": "string"
+    },
+    "product_type": {
+      "type": "string",
+      "enum": [
+        "bahan_baku",
+        "kemasan",
+        "botol_kosong",
+        "label",
+        "bulk_hasil_mixing",
+        "barang_siap_bottling",
+        "barang_siap_labeling",
+        "barang_belum_cukai",
+        "barang_siap_jual",
+        "barang_pendukung"
+      ],
+      "description": "Tipe barang"
+    },
+    "bottle_size": {
+      "type": "number",
+      "description": "Ukuran botol (ml)"
+    },
+    "unit": {
+      "type": "string",
+      "enum": [
+        "kg",
+        "gram",
+        "pcs",
+        "mililiter",
+        "unit"
+      ],
+      "default": "pcs"
+    },
+    "sale_price": {
+      "type": "number",
+      "default": 0
+    },
+    "min_stock": {
+      "type": "number",
+      "default": 0
+    },
+    "excise_required": {
+      "type": "boolean",
+      "default": true,
+      "description": "Menentukan apakah produk wajib menggunakan pita cukai sebelum READY_FOR_SALE"
+    },
+    "is_active": {
+      "type": "boolean",
+      "default": true
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "name",
+    "product_type"
+  ]
+}

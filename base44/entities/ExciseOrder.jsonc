@@ -1,0 +1,107 @@
+{
+  "name": "ExciseOrder",
+  "type": "object",
+  "properties": {
+    "excise_number": {
+      "type": "string",
+      "description": "Nomor proses cukai, unik"
+    },
+    "brand_id": {
+      "type": "string"
+    },
+    "brand_name": {
+      "type": "string"
+    },
+    "product_id": {
+      "type": "string"
+    },
+    "product_name": {
+      "type": "string"
+    },
+    "batch_number": {
+      "type": "string"
+    },
+    "bottle_size": {
+      "type": "number"
+    },
+    "quantity": {
+      "type": "integer",
+      "description": "Jumlah barang"
+    },
+    "excise_label_type": {
+      "type": "string",
+      "description": "Jenis pita cukai (label visual)"
+    },
+    "excise_material_id": {
+      "type": "string",
+      "description": "ID Material pita cukai (material_type=EXCISE) dari mapping"
+    },
+    "excise_material_name": {
+      "type": "string"
+    },
+    "excise_quantity_per_unit": {
+      "type": "number",
+      "default": 1,
+      "description": "Kebutuhan pita cukai per unit produk (dari mapping)"
+    },
+    "excise_total_required": {
+      "type": "number",
+      "description": "Total pita cukai dikonsumsi (quantity x per_unit)"
+    },
+    "use_box": {
+      "type": "boolean",
+      "default": false,
+      "description": "Proses lanjutan: gunakan box (kemasan luar) saat proses cukai"
+    },
+    "box_material_id": {
+      "type": "string",
+      "description": "ID Material box (material_type=PACKAGING) yang dikonsumsi"
+    },
+    "box_material_name": {
+      "type": "string"
+    },
+    "box_quantity_per_unit": {
+      "type": "number",
+      "default": 1,
+      "description": "Kebutuhan box per unit produk (boleh desimal, mis. 1/24)"
+    },
+    "box_total_required": {
+      "type": "number",
+      "description": "Total box dikonsumsi (quantity x per_unit)"
+    },
+    "document_number": {
+      "type": "string",
+      "description": "Nomor dokumen"
+    },
+    "excise_reference_number": {
+      "type": "string",
+      "description": "Nomor referensi cukai"
+    },
+    "excise_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "operator": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "diproses",
+        "selesai",
+        "siap_jual",
+        "dibatalkan"
+      ],
+      "default": "draft"
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "excise_date",
+    "quantity",
+    "status"
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "name": "Brand",
+  "type": "object",
+  "properties": {
+    "code": {
+      "type": "string",
+      "description": "Kode merk, unik"
+    },
+    "name": {
+      "type": "string",
+      "description": "Nama merk"
+    },
+    "logo_url": {
+      "type": "string",
+      "format": "uri",
+      "description": "Logo URL"
+    },
+    "is_active": {
+      "type": "boolean",
+      "default": true
+    },
+    "notes": {
+      "type": "string",
+      "description": "Catatan"
+    }
+  },
+  "required": [
+    "code",
+    "name"
+  ]
+}

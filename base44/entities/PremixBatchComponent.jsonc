@@ -1,0 +1,52 @@
+{
+  "name": "PremixBatchComponent",
+  "type": "object",
+  "properties": {
+    "premix_batch_id": {
+      "type": "string",
+      "description": "ID PremixBatch"
+    },
+    "premix_batch_code": {
+      "type": "string"
+    },
+    "component_material_id": {
+      "type": "string",
+      "description": "ID bahan pembentuk"
+    },
+    "component_material_code": {
+      "type": "string"
+    },
+    "component_material_name": {
+      "type": "string"
+    },
+    "source_batch_id": {
+      "type": "string",
+      "description": "ID batch bahan baku sumber (traceability)"
+    },
+    "source_batch_number": {
+      "type": "string"
+    },
+    "standard_quantity": {
+      "type": "number",
+      "description": "Quantity standar menurut resep"
+    },
+    "actual_quantity": {
+      "type": "number",
+      "description": "Quantity aktual ditimbang"
+    },
+    "unit": {
+      "type": "string"
+    },
+    "supplier_id": {
+      "type": "string"
+    },
+    "supplier_name": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "premix_batch_id",
+    "component_material_id",
+    "actual_quantity"
+  ]
+}

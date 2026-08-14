@@ -1,0 +1,60 @@
+{
+  "name": "StockAdjustment",
+  "type": "object",
+  "properties": {
+    "adjustment_number": {
+      "type": "string",
+      "description": "Nomor penyesuaian, unik"
+    },
+    "adjustment_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "item_type": {
+      "type": "string"
+    },
+    "item_id": {
+      "type": "string"
+    },
+    "item_name": {
+      "type": "string"
+    },
+    "batch_id": {
+      "type": "string"
+    },
+    "warehouse_id": {
+      "type": "string"
+    },
+    "warehouse_name": {
+      "type": "string"
+    },
+    "quantity_before": {
+      "type": "number"
+    },
+    "quantity_after": {
+      "type": "number"
+    },
+    "adjustment_type": {
+      "type": "string",
+      "enum": [
+        "increase",
+        "decrease"
+      ],
+      "description": "Jenis penyesuaian"
+    },
+    "reason": {
+      "type": "string",
+      "description": "Alasan koreksi"
+    },
+    "operator": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "adjustment_date",
+    "item_id",
+    "quantity_before",
+    "quantity_after",
+    "reason"
+  ]
+}

@@ -1,0 +1,104 @@
+{
+  "name": "PurchaseItem",
+  "type": "object",
+  "properties": {
+    "purchase_id": {
+      "type": "string",
+      "description": "ID pembelian"
+    },
+    "item_type": {
+      "type": "string",
+      "enum": [
+        "material",
+        "packaging",
+        "label",
+        "excise_material",
+        "consumable",
+        "supporting_item"
+      ],
+      "description": "Jenis item"
+    },
+    "item_id": {
+      "type": "string"
+    },
+    "item_code": {
+      "type": "string",
+      "description": "Snapshot kode item"
+    },
+    "item_name": {
+      "type": "string",
+      "description": "Snapshot nama item"
+    },
+    "category_name": {
+      "type": "string",
+      "description": "Snapshot kategori"
+    },
+    "batch_supplier": {
+      "type": "string",
+      "description": "Nomor batch dari supplier"
+    },
+    "lot_number": {
+      "type": "string"
+    },
+    "production_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "expiry_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "quantity": {
+      "type": "number",
+      "description": "Jumlah dalam satuan beli"
+    },
+    "unit": {
+      "type": "string",
+      "description": "Satuan beli"
+    },
+    "conversion_factor": {
+      "type": "number",
+      "default": 1,
+      "description": "Faktor konversi ke satuan dasar"
+    },
+    "base_unit": {
+      "type": "string",
+      "description": "Satuan dasar untuk stok"
+    },
+    "base_quantity": {
+      "type": "number",
+      "description": "Jumlah dalam satuan dasar (quantity x conversion_factor)"
+    },
+    "unit_price": {
+      "type": "number",
+      "default": 0
+    },
+    "discount": {
+      "type": "number",
+      "default": 0
+    },
+    "tax": {
+      "type": "number",
+      "default": 0
+    },
+    "subtotal": {
+      "type": "number",
+      "default": 0
+    },
+    "warehouse_id": {
+      "type": "string"
+    },
+    "warehouse_name": {
+      "type": "string"
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "purchase_id",
+    "item_type",
+    "item_id",
+    "quantity"
+  ]
+}

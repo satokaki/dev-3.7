@@ -1,0 +1,55 @@
+{
+  "name": "ProductComponentMapping",
+  "type": "object",
+  "properties": {
+    "product_id": {
+      "type": "string",
+      "description": "ID produk jadi"
+    },
+    "product_name": {
+      "type": "string"
+    },
+    "component_type": {
+      "type": "string",
+      "enum": [
+        "bottle",
+        "box",
+        "label",
+        "excise"
+      ],
+      "description": "Jenis komponen yang dipetakan ke produk"
+    },
+    "material_id": {
+      "type": "string",
+      "description": "ID Material (botol/box/label/cukai) yang kompatibel"
+    },
+    "material_code": {
+      "type": "string"
+    },
+    "material_name": {
+      "type": "string"
+    },
+    "quantity_per_unit": {
+      "type": "number",
+      "default": 1,
+      "description": "Jumlah komponen per unit produk (label/cukai/box). Botol = 1."
+    },
+    "is_default": {
+      "type": "boolean",
+      "default": false,
+      "description": "Pilihan default saat operator tidak memilih manual"
+    },
+    "is_active": {
+      "type": "boolean",
+      "default": true
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "product_id",
+    "component_type",
+    "material_id"
+  ]
+}

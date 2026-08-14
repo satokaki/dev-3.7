@@ -1,0 +1,125 @@
+{
+  "name": "Purchase",
+  "type": "object",
+  "properties": {
+    "purchase_number": {
+      "type": "string",
+      "description": "Nomor pembelian (auto: PO-YYYYMM-00001), unik"
+    },
+    "supplier_invoice_number": {
+      "type": "string",
+      "description": "Nomor invoice dari supplier"
+    },
+    "purchase_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Tanggal pembelian"
+    },
+    "supplier_id": {
+      "type": "string"
+    },
+    "supplier_name": {
+      "type": "string"
+    },
+    "warehouse_id": {
+      "type": "string",
+      "description": "Gudang tujuan"
+    },
+    "warehouse_name": {
+      "type": "string"
+    },
+    "payment_method": {
+      "type": "string",
+      "enum": [
+        "cash",
+        "transfer",
+        "tempo"
+      ],
+      "default": "cash"
+    },
+    "payment_terms": {
+      "type": "integer",
+      "default": 0,
+      "description": "Termin pembayaran (hari)"
+    },
+    "due_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "subtotal": {
+      "type": "number",
+      "default": 0
+    },
+    "discount": {
+      "type": "number",
+      "default": 0
+    },
+    "tax": {
+      "type": "number",
+      "default": 0
+    },
+    "additional_cost": {
+      "type": "number",
+      "default": 0,
+      "description": "Biaya tambahan (ongkir dll)"
+    },
+    "total": {
+      "type": "number",
+      "default": 0
+    },
+    "total_paid": {
+      "type": "number",
+      "default": 0
+    },
+    "remaining_payable": {
+      "type": "number",
+      "default": 0
+    },
+    "purchase_status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "ordered",
+        "partially_received",
+        "received",
+        "posted",
+        "cancelled"
+      ],
+      "default": "draft"
+    },
+    "payment_status": {
+      "type": "string",
+      "enum": [
+        "belum_dibayar",
+        "sebagian_dibayar",
+        "lunas",
+        "jatuh_tempo"
+      ],
+      "default": "belum_dibayar"
+    },
+    "notes": {
+      "type": "string"
+    },
+    "created_by": {
+      "type": "string"
+    },
+    "posted_by": {
+      "type": "string"
+    },
+    "posted_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "deleted_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Soft delete timestamp"
+    }
+  },
+  "required": [
+    "purchase_date",
+    "supplier_id",
+    "payment_method",
+    "purchase_status"
+  ]
+}

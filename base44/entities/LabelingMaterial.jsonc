@@ -1,0 +1,49 @@
+{
+  "name": "LabelingMaterial",
+  "type": "object",
+  "properties": {
+    "labeling_id": {
+      "type": "string",
+      "description": "ID LabelingOrder"
+    },
+    "labeling_number": {
+      "type": "string"
+    },
+    "label_item_id": {
+      "type": "string",
+      "description": "ID item label/sticker (Material material_type LABEL/STICKER)"
+    },
+    "label_item_code": {
+      "type": "string"
+    },
+    "label_item_name": {
+      "type": "string"
+    },
+    "quantity_per_unit": {
+      "type": "number",
+      "default": 1,
+      "description": "Kebutuhan label per unit produk"
+    },
+    "total_quantity_required": {
+      "type": "number",
+      "description": "Total kebutuhan = jumlah_produk \u00d7 quantity_per_unit"
+    },
+    "stock_before": {
+      "type": "number",
+      "description": "Stok label sebelum konsumsi"
+    },
+    "stock_after": {
+      "type": "number",
+      "description": "Stok label setelah konsumsi"
+    },
+    "unit": {
+      "type": "string",
+      "default": "unit"
+    }
+  },
+  "required": [
+    "labeling_id",
+    "label_item_id",
+    "total_quantity_required"
+  ]
+}

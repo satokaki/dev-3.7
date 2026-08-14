@@ -1,0 +1,27 @@
+{
+  "name": "DocumentSequence",
+  "type": "object",
+  "properties": {
+    "sequence_key": {
+      "type": "string",
+      "description": "Kunci sequence, unik (contoh: CUSTOMER-2026, PRODUCT-BHN)"
+    },
+    "prefix": {
+      "type": "string",
+      "description": "Prefix dokumen"
+    },
+    "year": {
+      "type": "integer",
+      "description": "Tahun"
+    },
+    "last_number": {
+      "type": "integer",
+      "default": 0,
+      "description": "Nomor urut terakhir"
+    }
+  },
+  "required": [
+    "sequence_key",
+    "prefix"
+  ]
+}

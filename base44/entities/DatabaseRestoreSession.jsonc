@@ -1,0 +1,118 @@
+{
+  "name": "DatabaseRestoreSession",
+  "type": "object",
+  "properties": {
+    "session_code": {
+      "type": "string",
+      "description": "Kode unik restore session"
+    },
+    "file_uri": {
+      "type": "string",
+      "description": "Private file URI backup sumber restore"
+    },
+    "file_name": {
+      "type": "string"
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "data_only",
+        "operational",
+        "full"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "PREPARING",
+        "READY",
+        "RUNNING",
+        "PAUSED",
+        "FAILED",
+        "VERIFYING",
+        "COMPLETED"
+      ]
+    },
+    "current_entity": {
+      "type": "string"
+    },
+    "entity_index": {
+      "type": "number"
+    },
+    "current_offset": {
+      "type": "number"
+    },
+    "batch_size": {
+      "type": "number"
+    },
+    "current_batch": {
+      "type": "number"
+    },
+    "total_batches": {
+      "type": "number"
+    },
+    "entity_records": {
+      "type": "number"
+    },
+    "entity_processed": {
+      "type": "number"
+    },
+    "total_records": {
+      "type": "number"
+    },
+    "total_processed": {
+      "type": "number"
+    },
+    "expected_json": {
+      "type": "string"
+    },
+    "restored_json": {
+      "type": "string"
+    },
+    "id_maps_json": {
+      "type": "string"
+    },
+    "completed_entities_json": {
+      "type": "string"
+    },
+    "auto_backup_code": {
+      "type": "string"
+    },
+    "backup_code": {
+      "type": "string"
+    },
+    "password_required": {
+      "type": "boolean"
+    },
+    "error_entity": {
+      "type": "string"
+    },
+    "error_offset": {
+      "type": "number"
+    },
+    "error_message": {
+      "type": "string"
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "last_checkpoint_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "completed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "created_by": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "session_code",
+    "file_uri",
+    "mode",
+    "status"
+  ]
+}

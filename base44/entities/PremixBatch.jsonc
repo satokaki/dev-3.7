@@ -1,0 +1,99 @@
+{
+  "name": "PremixBatch",
+  "type": "object",
+  "properties": {
+    "batch_code": {
+      "type": "string",
+      "description": "Kode batch premix (auto: PMX-SUC10-YYYYMMDD-001), unik"
+    },
+    "material_id": {
+      "type": "string",
+      "description": "ID bahan premix (output material)"
+    },
+    "material_code": {
+      "type": "string"
+    },
+    "material_name": {
+      "type": "string"
+    },
+    "recipe_id": {
+      "type": "string"
+    },
+    "recipe_code": {
+      "type": "string"
+    },
+    "recipe_version": {
+      "type": "integer"
+    },
+    "production_id": {
+      "type": "string",
+      "description": "ID ProductionOrder yang menghasilkan batch ini"
+    },
+    "production_number": {
+      "type": "string"
+    },
+    "quantity_produced": {
+      "type": "number",
+      "description": "Jumlah diproduksi (output aktual)"
+    },
+    "quantity_remaining": {
+      "type": "number",
+      "description": "Sisa stok batch"
+    },
+    "unit": {
+      "type": "string",
+      "enum": [
+        "gram",
+        "mililiter"
+      ]
+    },
+    "actual_density": {
+      "type": "number",
+      "description": "Density aktual batch"
+    },
+    "actual_concentration": {
+      "type": "number",
+      "description": "Konsentrasi aktual batch"
+    },
+    "production_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "expiry_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "DRAFT",
+        "IN_PROCESS",
+        "AVAILABLE",
+        "DEPLETED",
+        "QUARANTINE",
+        "EXPIRED",
+        "CANCELLED"
+      ],
+      "default": "DRAFT"
+    },
+    "warehouse_id": {
+      "type": "string"
+    },
+    "warehouse_name": {
+      "type": "string"
+    },
+    "created_by": {
+      "type": "string"
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "batch_code",
+    "material_id",
+    "production_id",
+    "quantity_produced",
+    "status"
+  ]
+}

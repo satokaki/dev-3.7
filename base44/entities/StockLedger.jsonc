@@ -1,0 +1,114 @@
+{
+  "name": "StockLedger",
+  "type": "object",
+  "properties": {
+    "transaction_date": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Tanggal dan waktu"
+    },
+    "transaction_number": {
+      "type": "string",
+      "description": "Nomor transaksi"
+    },
+    "transaction_type": {
+      "type": "string",
+      "enum": [
+        "opening_balance",
+        "purchase_receipt",
+        "production_consumption",
+        "production_output",
+        "production_waste",
+        "bottling_consumption",
+        "bottling_bottle_consumption",
+        "bottling_output",
+        "bottling_waste",
+        "labeling_consumption",
+        "label_consumption",
+        "labeling_output",
+        "labeling_waste",
+        "excise_consumption",
+        "excise_output",
+        "sales",
+        "sales_return",
+        "production_reversal",
+        "bottling_reversal",
+        "labeling_reversal",
+        "excise_reversal",
+        "sales_reversal",
+        "stock_adjustment",
+        "transfer_gudang",
+        "premix_consumption",
+        "premix_output",
+        "premix_waste",
+        "premix_reversal"
+      ],
+      "description": "Tipe transaksi"
+    },
+    "item_type": {
+      "type": "string",
+      "description": "Jenis item (material, product)"
+    },
+    "inventory_status": {
+      "type": "string",
+      "description": "Status persediaan baris balance yang terpengaruh (RAW_MATERIAL, BULK, READY_FOR_LABELING, UNEXCISED, READY_FOR_SALE, QUARANTINE, REJECTED) \u2014 untuk rekonsiliasi per stage. Material konsumsi pakai '' (sesuai balance hasil pembelian)."
+    },
+    "item_id": {
+      "type": "string"
+    },
+    "item_code": {
+      "type": "string"
+    },
+    "item_name": {
+      "type": "string"
+    },
+    "batch_id": {
+      "type": "string"
+    },
+    "batch_number": {
+      "type": "string"
+    },
+    "warehouse_id": {
+      "type": "string"
+    },
+    "warehouse_name": {
+      "type": "string"
+    },
+    "quantity_in": {
+      "type": "number",
+      "default": 0
+    },
+    "quantity_out": {
+      "type": "number",
+      "default": 0
+    },
+    "balance_quantity": {
+      "type": "number",
+      "default": 0
+    },
+    "unit": {
+      "type": "string"
+    },
+    "unit_cost": {
+      "type": "number",
+      "default": 0
+    },
+    "reference_type": {
+      "type": "string",
+      "description": "Tipe referensi"
+    },
+    "reference_id": {
+      "type": "string",
+      "description": "ID referensi"
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "transaction_date",
+    "transaction_type",
+    "item_id",
+    "item_name"
+  ]
+}

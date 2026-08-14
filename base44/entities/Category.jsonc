@@ -1,0 +1,38 @@
+{
+  "name": "Category",
+  "type": "object",
+  "properties": {
+    "code": {
+      "type": "string",
+      "description": "Kode kategori, unik"
+    },
+    "name": {
+      "type": "string",
+      "description": "Nama kategori"
+    },
+    "category_type": {
+      "type": "string",
+      "enum": [
+        "bahan",
+        "barang",
+        "kemasan",
+        "label",
+        "cukai",
+        "produk_jadi"
+      ],
+      "description": "Jenis kategori"
+    },
+    "is_active": {
+      "type": "boolean",
+      "default": true
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "code",
+    "name",
+    "category_type"
+  ]
+}

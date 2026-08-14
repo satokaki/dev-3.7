@@ -1,0 +1,55 @@
+{
+  "name": "AuditLog",
+  "type": "object",
+  "properties": {
+    "action_time": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Waktu aksi"
+    },
+    "user_name": {
+      "type": "string",
+      "description": "Nama user"
+    },
+    "module": {
+      "type": "string",
+      "description": "Modul"
+    },
+    "action": {
+      "type": "string",
+      "description": "Aksi"
+    },
+    "entity_type": {
+      "type": "string"
+    },
+    "entity_id": {
+      "type": "string"
+    },
+    "reference_number": {
+      "type": "string"
+    },
+    "data_before": {
+      "type": "string",
+      "description": "JSON data sebelum"
+    },
+    "data_after": {
+      "type": "string",
+      "description": "JSON data sesudah"
+    },
+    "ip_address": {
+      "type": "string"
+    },
+    "user_agent": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string",
+      "description": "Alasan perubahan"
+    }
+  },
+  "required": [
+    "action_time",
+    "module",
+    "action"
+  ]
+}

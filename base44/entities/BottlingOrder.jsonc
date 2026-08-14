@@ -1,0 +1,59 @@
+{
+  "name": "BottlingOrder",
+  "type": "object",
+  "properties": {
+    "bottling_number": {
+      "type": "string",
+      "description": "Nomor bottling, unik"
+    },
+    "production_id": {
+      "type": "string",
+      "description": "ID batch produksi"
+    },
+    "batch_number": {
+      "type": "string"
+    },
+    "bottling_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "operator": {
+      "type": "string"
+    },
+    "total_bulk_processed": {
+      "type": "number",
+      "description": "Total bulk diproses (ml)"
+    },
+    "total_output": {
+      "type": "number",
+      "description": "Total output (ml)"
+    },
+    "waste": {
+      "type": "number",
+      "description": "Waste (ml)"
+    },
+    "remaining_bulk": {
+      "type": "number",
+      "description": "Sisa bulk (ml)"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "sedang_diproses",
+        "selesai",
+        "siap_labeling",
+        "dibatalkan"
+      ],
+      "default": "draft"
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "bottling_date",
+    "total_bulk_processed",
+    "status"
+  ]
+}

@@ -1,0 +1,64 @@
+{
+  "name": "ProductionMaterial",
+  "type": "object",
+  "properties": {
+    "production_id": {
+      "type": "string",
+      "description": "ID produksi"
+    },
+    "material_id": {
+      "type": "string"
+    },
+    "material_name": {
+      "type": "string"
+    },
+    "material_type": {
+      "type": "string"
+    },
+    "percentage": {
+      "type": "number",
+      "description": "Persentase (%)"
+    },
+    "required_ml": {
+      "type": "number",
+      "description": "Kebutuhan (ml)"
+    },
+    "required_gram": {
+      "type": "number",
+      "description": "Kebutuhan (gram)"
+    },
+    "actual_gram": {
+      "type": "number",
+      "description": "Gram aktual"
+    },
+    "deviation_gram": {
+      "type": "number",
+      "description": "Selisih gram"
+    },
+    "deviation_percent": {
+      "type": "number",
+      "description": "Persentase deviasi"
+    },
+    "lot_number": {
+      "type": "string",
+      "description": "Lot bahan"
+    },
+    "expiry_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Tanggal kedaluwarsa bahan"
+    },
+    "stock_available": {
+      "type": "number",
+      "description": "Stok tersedia"
+    },
+    "stock_sufficient": {
+      "type": "boolean",
+      "description": "Stok cukup atau tidak"
+    }
+  },
+  "required": [
+    "production_id",
+    "material_id"
+  ]
+}

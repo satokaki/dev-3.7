@@ -1,0 +1,55 @@
+{
+  "name": "StockBalance",
+  "type": "object",
+  "properties": {
+    "item_type": {
+      "type": "string",
+      "description": "Jenis item (material, product)"
+    },
+    "item_id": {
+      "type": "string"
+    },
+    "inventory_status": {
+      "type": "string",
+      "description": "Status persediaan: RAW_MATERIAL, BULK, READY_FOR_LABELING, UNEXCISED, READY_FOR_SALE, QUARANTINE, REJECTED. Membedakan stage barang yang sama agar tidak menumpuk di satu baris balance (mencegah stok ganda & perpindahan status net-0)."
+    },
+    "item_name": {
+      "type": "string"
+    },
+    "item_code": {
+      "type": "string"
+    },
+    "batch_id": {
+      "type": "string"
+    },
+    "batch_number": {
+      "type": "string"
+    },
+    "warehouse_id": {
+      "type": "string"
+    },
+    "warehouse_name": {
+      "type": "string"
+    },
+    "quantity": {
+      "type": "number",
+      "default": 0
+    },
+    "reserved_quantity": {
+      "type": "number",
+      "default": 0
+    },
+    "available_quantity": {
+      "type": "number",
+      "default": 0
+    },
+    "unit": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "item_type",
+    "item_id",
+    "quantity"
+  ]
+}

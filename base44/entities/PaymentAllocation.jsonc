@@ -1,0 +1,33 @@
+{
+  "name": "PaymentAllocation",
+  "type": "object",
+  "properties": {
+    "payment_id": {
+      "type": "string",
+      "description": "ID pembayaran"
+    },
+    "sale_id": {
+      "type": "string"
+    },
+    "invoice_number": {
+      "type": "string"
+    },
+    "allocated_amount": {
+      "type": "number",
+      "description": "Nominal dialokasikan"
+    },
+    "invoice_balance_before": {
+      "type": "number",
+      "description": "Saldo invoice sebelum"
+    },
+    "invoice_balance_after": {
+      "type": "number",
+      "description": "Saldo invoice setelah"
+    }
+  },
+  "required": [
+    "payment_id",
+    "sale_id",
+    "allocated_amount"
+  ]
+}

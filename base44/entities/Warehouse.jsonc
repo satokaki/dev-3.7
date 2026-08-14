@@ -1,0 +1,39 @@
+{
+  "name": "Warehouse",
+  "type": "object",
+  "properties": {
+    "code": {
+      "type": "string",
+      "description": "Kode gudang, unik"
+    },
+    "name": {
+      "type": "string",
+      "description": "Nama gudang"
+    },
+    "warehouse_type": {
+      "type": "string",
+      "enum": [
+        "gudang_bahan",
+        "area_produksi",
+        "area_bulk",
+        "area_siap_labeling",
+        "area_belum_cukai",
+        "gudang_barang_jadi",
+        "gudang_retur"
+      ],
+      "description": "Jenis gudang"
+    },
+    "is_active": {
+      "type": "boolean",
+      "default": true
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "code",
+    "name",
+    "warehouse_type"
+  ]
+}

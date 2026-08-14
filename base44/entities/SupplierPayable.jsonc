@@ -1,0 +1,60 @@
+{
+  "name": "SupplierPayable",
+  "type": "object",
+  "properties": {
+    "payable_number": {
+      "type": "string",
+      "description": "Nomor hutang (auto: AP-YYYYMM-00001), unik"
+    },
+    "purchase_id": {
+      "type": "string"
+    },
+    "purchase_number": {
+      "type": "string"
+    },
+    "supplier_id": {
+      "type": "string"
+    },
+    "supplier_name": {
+      "type": "string"
+    },
+    "invoice_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "due_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "total_amount": {
+      "type": "number",
+      "default": 0
+    },
+    "total_paid": {
+      "type": "number",
+      "default": 0
+    },
+    "remaining_balance": {
+      "type": "number",
+      "default": 0
+    },
+    "payment_status": {
+      "type": "string",
+      "enum": [
+        "belum_dibayar",
+        "sebagian_dibayar",
+        "lunas",
+        "jatuh_tempo"
+      ],
+      "default": "belum_dibayar"
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "purchase_id",
+    "supplier_id",
+    "total_amount"
+  ]
+}

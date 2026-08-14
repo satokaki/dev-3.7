@@ -1,0 +1,47 @@
+{
+  "name": "SaleItem",
+  "type": "object",
+  "properties": {
+    "sale_id": {
+      "type": "string",
+      "description": "ID penjualan"
+    },
+    "product_id": {
+      "type": "string"
+    },
+    "product_name": {
+      "type": "string"
+    },
+    "batch_id": {
+      "type": "string"
+    },
+    "batch_number": {
+      "type": "string"
+    },
+    "quantity": {
+      "type": "number",
+      "description": "Jumlah"
+    },
+    "unit": {
+      "type": "string"
+    },
+    "price": {
+      "type": "number",
+      "description": "Harga (snapshot)"
+    },
+    "discount": {
+      "type": "number",
+      "default": 0
+    },
+    "subtotal": {
+      "type": "number",
+      "description": "Subtotal"
+    }
+  },
+  "required": [
+    "sale_id",
+    "product_id",
+    "quantity",
+    "price"
+  ]
+}

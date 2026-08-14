@@ -1,0 +1,68 @@
+{
+  "name": "BottlingOutput",
+  "type": "object",
+  "properties": {
+    "bottling_id": {
+      "type": "string",
+      "description": "ID bottling order"
+    },
+    "product_id": {
+      "type": "string"
+    },
+    "product_name": {
+      "type": "string"
+    },
+    "bottle_size": {
+      "type": "number",
+      "description": "Ukuran botol (ml)"
+    },
+    "bottle_count": {
+      "type": "integer",
+      "description": "Jumlah botol"
+    },
+    "volume_per_bottle": {
+      "type": "number",
+      "description": "Volume per botol (ml)"
+    },
+    "total_volume": {
+      "type": "number",
+      "description": "Total volume (ml)"
+    },
+    "bottle_item_id": {
+      "type": "string",
+      "description": "ID item botol (Material material_type=BOTTLE) yang dikonsumsi"
+    },
+    "bottle_item_code": {
+      "type": "string"
+    },
+    "bottle_item_name": {
+      "type": "string"
+    },
+    "bottle_color": {
+      "type": "string",
+      "description": "Warna botol (snapshot)"
+    },
+    "bottle_model": {
+      "type": "string",
+      "description": "Model botol (snapshot)"
+    },
+    "bottle_stock_used": {
+      "type": "number",
+      "description": "Jumlah botol dikonsumsi dari stok (biasanya = bottle_count)"
+    },
+    "output_status": {
+      "type": "string",
+      "enum": [
+        "siap_labeling",
+        "dilabeli",
+        "dibatalkan"
+      ],
+      "default": "siap_labeling"
+    }
+  },
+  "required": [
+    "bottling_id",
+    "bottle_count",
+    "volume_per_bottle"
+  ]
+}

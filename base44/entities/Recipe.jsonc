@@ -1,0 +1,161 @@
+{
+  "name": "Recipe",
+  "type": "object",
+  "properties": {
+    "code": {
+      "type": "string",
+      "description": "Kode resep, unik"
+    },
+    "name": {
+      "type": "string",
+      "description": "Nama resep"
+    },
+    "recipe_type": {
+      "type": "string",
+      "enum": [
+        "PREMIX",
+        "FINISHED_PRODUCT"
+      ],
+      "default": "FINISHED_PRODUCT",
+      "description": "PREMIX menghasilkan bahan baru; FINISHED_PRODUCT menghasilkan produk akhir"
+    },
+    "output_material_id": {
+      "type": "string",
+      "description": "Bahan premix yang dihasilkan (wajib untuk recipe_type=PREMIX)"
+    },
+    "output_material_name": {
+      "type": "string"
+    },
+    "calculation_basis": {
+      "type": "string",
+      "enum": [
+        "W_W",
+        "W_V",
+        "V_V"
+      ],
+      "default": "W_W",
+      "description": "Basis perhitungan: W_W (gram/total gram), W_V (gram/total volume), V_V (ml/total ml)"
+    },
+    "brand_id": {
+      "type": "string"
+    },
+    "brand_name": {
+      "type": "string"
+    },
+    "product_id": {
+      "type": "string",
+      "description": "Produk terkait (untuk FINISHED_PRODUCT)"
+    },
+    "product_name": {
+      "type": "string"
+    },
+    "version": {
+      "type": "integer",
+      "default": 1,
+      "description": "Versi resep"
+    },
+    "parent_recipe_id": {
+      "type": "string",
+      "description": "ID resep induk untuk versi baru"
+    },
+    "target_volume": {
+      "type": "number",
+      "description": "Target volume standar (ml)"
+    },
+    "target_quantity": {
+      "type": "number",
+      "description": "Target quantity premix (gram/ml) untuk PREMIX"
+    },
+    "target_unit": {
+      "type": "string",
+      "enum": [
+        "gram",
+        "mililiter"
+      ]
+    },
+    "target_nicotine": {
+      "type": "number",
+      "description": "Target nicotine (mg/ml)"
+    },
+    "target_pg": {
+      "type": "number",
+      "description": "Target PG (%)"
+    },
+    "target_vg": {
+      "type": "number",
+      "description": "Target VG (%)"
+    },
+    "total_flavor": {
+      "type": "number",
+      "description": "Total flavor (%)"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "review",
+        "approved",
+        "inactive"
+      ],
+      "default": "draft"
+    },
+    "notes": {
+      "type": "string"
+    },
+    "approved_by": {
+      "type": "string"
+    },
+    "approval_date": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "visibility_type": {
+      "type": "string",
+      "enum": [
+        "PUBLIC_INTERNAL",
+        "ADMIN_ONLY",
+        "ROLE_RESTRICTED"
+      ],
+      "default": "PUBLIC_INTERNAL",
+      "description": "Visibilitas resep. PUBLIC_INTERNAL = semua user berizin (recipe.view); ADMIN_ONLY = hanya admin / recipe.hidden.view (di-enforce backend via RLS); ROLE_RESTRICTED = role terpilih (allowed_role_ids, di-enforce client)."
+    },
+    "is_hidden": {
+      "type": "boolean",
+      "default": false,
+      "description": "Sembunyikan dari Brewer/non-admin di UI. True => resep tak tampil di daftar/search/produksi kecuali user memiliki recipe.hidden.view, atau allow_production_without_formula_view + recipe.use_without_formula_view (mode produksi tanpa lihat formula)."
+    },
+    "allow_production_without_formula_view": {
+      "type": "boolean",
+      "default": false,
+      "description": "Jika true, user dengan recipe.use_without_formula_view dapat memilih resep ini di Produksi tanpa melihat persentase/formula (hanya nama, kode, versi, kebutuhan bahan)."
+    },
+    "allowed_role_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Daftar role yang boleh melihat resep saat visibility_type=ROLE_RESTRICTED (mis. ['brewer','production_head'])."
+    }
+  },
+  "required": [
+    "code",
+    "name",
+    "status"
+  ],
+  "rls": {
+    "read": {
+      "$or": [
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        },
+        {
+          "data.visibility_type": {
+            "$ne": "ADMIN_ONLY"
+          }
+        }
+      ]
+    }
+  }
+}
