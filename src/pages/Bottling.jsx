@@ -12,7 +12,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import NumberInput from '@/components/NumberInput';
 import SearchableSelect from '@/components/SearchableSelect';
-import { Plus } from 'lucide-react';
+import { Plus, Eye } from 'lucide-react';
 import { generateOrderNumber } from '@/lib/sequence';
 import { recordStockMovement, getAllStockBalances, createAuditLog } from '@/lib/stockUtils';
 import { getInventoryDisplayName } from '@/lib/inventoryDisplay';
@@ -46,6 +46,7 @@ export default function Bottling() {
   const [modalOpen, setModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM());
+  const [detailItem, setDetailItem] = useState(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -80,6 +81,7 @@ export default function Bottling() {
 
           return {
             ...order,
+            outputs: orderOutputs,
             output_product_name: productNames.join(', '),
             bottle_count: bottleCount,
           };
@@ -337,6 +339,21 @@ export default function Bottling() {
     }
   };
 
+  const openDetail = (row) => {
+    setDetailItem(row);
+  };
+
+  const detailOutputs = detailItem?.outputs || [];
+
+  const detailColumns = [
+    { key: 'product_name', header: 'Produk Output', className: 'font-medium', render: r => r.product_name || '—' },
+    { key: 'bottle_size', header: 'Ukuran', render: r => `${Number(r.bottle_size || r.volume_per_bottle) || 0} ml` },
+    { key: 'bottle_count', header: 'Jumlah Botol', render: r => <span className="tabular-nums">{Number(r.bottle_count) || 0} botol</span> },
+    { key: 'total_volume', header: 'Volume Output', render: r => <span className="tabular-nums">{Number(r.total_volume) || 0} ml</span> },
+    { key: 'bottle_item_name', header: 'Botol', render: r => r.bottle_item_name || '—' },
+    { key: 'output_status', header: 'Status', render: r => <StatusBadge status={r.output_status} /> },
+  ];
+
   const columns = [
     { key: 'bottling_number', header: 'No. Bottling', sortable: true, className: 'font-mono font-medium' },
     { key: 'bottling_date', header: 'Tanggal', sortable: true },
@@ -346,6 +363,22 @@ export default function Bottling() {
     { key: 'remaining_bulk', header: 'Sisa Bulk', render: r => <span className="tabular-nums">{r.remaining_bulk} ml</span> },
     { key: 'operator', header: 'Operator', render: r => r.operator || '—' },
     { key: 'status', header: 'Status', render: r => <StatusBadge status={r.status} /> },
+    {
+      key: 'actions',
+      header: 'Aksi',
+      width: '80px',
+      render: row => (
+        <button
+          type="button"
+          onClick={() => openDetail(row)}
+          className="p-1.5 hover:bg-muted rounded-md text-muted-foreground hover:text-foreground transition-colors"
+          title="Lihat Work Order"
+          aria-label={`Lihat Work Order ${row.bottling_number || ''}`}
+        >
+          <Eye className="w-4 h-4" />
+        </button>
+      ),
+    },
   ];
 
   return (
@@ -368,6 +401,48 @@ export default function Bottling() {
         searchKeys={['bottling_number', 'batch_number', 'operator', 'output_product_name']}
         searchPlaceholder="Cari bottling..."
       />
+
+      <FormModal
+        open={!!detailItem}
+        onClose={() => setDetailItem(null)}
+        title={detailItem ? `Work Order ${detailItem.bottling_number}` : 'Detail Work Order Bottling'}
+        onSubmit={() => setDetailItem(null)}
+        submitLabel="Tutup"
+        size="lg"
+      >
+        {detailItem && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-[12.5px]">
+              <div><span className="text-muted-foreground">No. Bottling</span><div className="font-mono font-medium">{detailItem.bottling_number || '—'}</div></div>
+              <div><span className="text-muted-foreground">Tanggal</span><div>{detailItem.bottling_date || '—'}</div></div>
+              <div><span className="text-muted-foreground">Batch</span><div className="font-mono">{detailItem.batch_number || '—'}</div></div>
+              <div><span className="text-muted-foreground">Operator</span><div>{detailItem.operator || '—'}</div></div>
+              <div><span className="text-muted-foreground">Status</span><div className="mt-0.5"><StatusBadge status={detailItem.status} /></div></div>
+              <div><span className="text-muted-foreground">Produk Output</span><div className="font-medium">{detailItem.output_product_name || '—'}</div></div>
+              <div><span className="text-muted-foreground">Jumlah Botol</span><div className="tabular-nums font-medium">{Number(detailItem.bottle_count) || 0} botol</div></div>
+              <div><span className="text-muted-foreground">Volume Output</span><div className="tabular-nums">{Number(detailItem.total_output) || 0} ml</div></div>
+              <div><span className="text-muted-foreground">Sisa Bulk</span><div className="tabular-nums">{Number(detailItem.remaining_bulk) || 0} ml</div></div>
+            </div>
+
+            <div>
+              <div className="text-[12.5px] font-semibold mb-2">Detail Output Bottling</div>
+              <DataTable
+                columns={detailColumns}
+                data={detailOutputs}
+                searchable={false}
+                pageSize={50}
+                emptyMessage="Tidak ada detail output"
+              />
+            </div>
+
+            {detailItem.notes && (
+              <div className="rounded-md border border-border bg-muted/20 p-3 text-[12px]">
+                <span className="font-medium">Catatan:</span>{' '}{detailItem.notes}
+              </div>
+            )}
+          </div>
+        )}
+      </FormModal>
 
       <FormModal
         open={modalOpen}
