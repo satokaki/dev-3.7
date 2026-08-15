@@ -27,50 +27,38 @@ import {
   RESTORE_CONFIRM_PHRASE,
   MAX_RESTORE_FILE_SIZE,
 } from '@/lib/dbEnv';
-
 // Fetch a signed URL as a blob and force a browser download (never renders inline).
 async function triggerDownload(signedUrl, fileName) {
   const res = await fetch(signedUrl);
   if (!res.ok) throw new Error(`Gagal mengunduh file (status ${res.status})`);
-
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-
   a.href = url;
   a.download = fileName || 'LABPRO_BACKUP.json';
-
   document.body.appendChild(a);
   a.click();
   a.remove();
-
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
-
 const makeBackupDownloadName = (name, fallback = 'LABPRO_BACKUP') => {
   const safeName = String(name || fallback)
     .trim()
     .replace(/[<>:"/\\|?*]+/g, '-')
     .replace(/\s+/g, '_')
     .replace(/_+/g, '_');
-
   return `${safeName || fallback}.json`;
 };
-
 const ACTIVE_RESTORE_STORAGE_KEY = 'labpro_active_restore_session';
 const MAX_NETWORK_RETRIES = 5;
 const NETWORK_RETRY_DELAYS = [1000, 2000, 4000, 8000, 12000];
-
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
 const isTransientNetworkError = (error) => {
   if (error?.restoreData) return false;
-
   const status = Number(error?.response?.status || 0);
   const message = String(
     error?.response?.data?.error || error?.message || error || ''
   ).toLowerCase();
-
   return (
     [408, 429, 502, 503, 504].includes(status) ||
     error?.code === 'ERR_NETWORK' ||
@@ -83,7 +71,6 @@ const isTransientNetworkError = (error) => {
     message.includes('invalid or incomplete response')
   );
 };
-
 function readStoredRestoreSession() {
   try {
     return JSON.parse(
@@ -94,14 +81,11 @@ function readStoredRestoreSession() {
     return null;
   }
 }
-
 export default function DatabaseManagement() {
   const { toast } = useToast();
-
   const [backups, setBackups] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-
   // Save modal
   const [saveOpen, setSaveOpen] = useState(false);
   const [bkName, setBkName] = useState('');
@@ -110,7 +94,6 @@ export default function DatabaseManagement() {
   const [bkEncrypt, setBkEncrypt] = useState(false);
   const [bkPassword, setBkPassword] = useState('');
   const [lastBackup, setLastBackup] = useState(null);
-
   // Reset modal
   const [resetOpen, setResetOpen] = useState(false);
   const [resetMode, setResetMode] = useState('transaction');
@@ -119,14 +102,12 @@ export default function DatabaseManagement() {
   const [resetPhrase, setResetPhrase] = useState('');
   const [resetAck, setResetAck] = useState(false);
   const [resetPassword, setResetPassword] = useState('');
-
   // Stored-backup restore modal
   const [restoreOpen, setRestoreOpen] = useState(false);
   const [restoreId, setRestoreId] = useState('');
   const [restoreMode, setRestoreMode] = useState('operational');
   const [restorePhrase, setRestorePhrase] = useState('');
   const [restoreAck, setRestoreAck] = useState(false);
-
   // File restore modal
   const [fileOpen, setFileOpen] = useState(false);
   const [uploadedFile, setUploadedFile] = useState(null);
@@ -138,15 +119,12 @@ export default function DatabaseManagement() {
   const [filePhrase, setFilePhrase] = useState('');
   const [fileAck, setFileAck] = useState(false);
   const fileInputRef = useRef(null);
-
   // Batch restore progress
   const [restoreProgress, setRestoreProgress] = useState(null);
   const [restoreRunning, setRestoreRunning] = useState(false);
   const [resumableSession, setResumableSession] = useState(null);
   const [resumeChecking, setResumeChecking] = useState(false);
-
   const downloadAllowed = true;
-
   const loadBackups = useCallback(async () => {
     setLoading(true);
     try {
@@ -162,19 +140,15 @@ export default function DatabaseManagement() {
       setLoading(false);
     }
   }, [toast]);
-
   useEffect(() => {
     loadBackups();
   }, [loadBackups]);
-
   const clearActiveRestoreSession = useCallback(() => {
     localStorage.removeItem(ACTIVE_RESTORE_STORAGE_KEY);
     setResumableSession(null);
   }, []);
-
   const findResumableSession = useCallback(async () => {
     if (restoreRunning) return;
-
     setResumeChecking(true);
     try {
       const stored = readStoredRestoreSession();
@@ -182,20 +156,13 @@ export default function DatabaseManagement() {
         '-created_date',
         20
       );
-
       const activeRows = (rows || []).filter((row) =>
         ['READY', 'RUNNING', 'PAUSED', 'VERIFYING'].includes(row.status)
       );
-
-      // Resume only the session explicitly owned by this browser.
-      // Falling back to activeRows[0] can resurrect a stale or unrelated
-      // server-side session after the completed session was cleared locally.
       const active = stored?.id
         ? activeRows.find((row) => row.id === stored.id) || null
         : null;
-
       setResumableSession(active);
-
       if (active) {
         localStorage.setItem(
           ACTIVE_RESTORE_STORAGE_KEY,
@@ -205,6 +172,7 @@ export default function DatabaseManagement() {
             backupCode: active.backup_code || '',
             fileName: active.file_name || '',
             totalRecords: Number(active.total_records || 0),
+            source: stored?.source || 'file',
           })
         );
       } else {
@@ -216,41 +184,34 @@ export default function DatabaseManagement() {
       setResumeChecking(false);
     }
   }, [restoreRunning]);
-
   useEffect(() => {
-    if (fileOpen && !restoreRunning) {
+    if ((fileOpen || restoreOpen) && !restoreRunning) {
       findResumableSession();
     }
-  }, [fileOpen, restoreRunning, findResumableSession]);
-
+  }, [fileOpen, restoreOpen, restoreRunning, findResumableSession]);
   const fmtSize = (bytes) => {
     if (!bytes) return '-';
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / 1048576).toFixed(2)} MB`;
   };
-
   const fmtDate = (date) =>
     date ? new Date(date).toLocaleString('id-ID') : '-';
-
   const statusColor = {
     COMPLETED: 'bg-emerald-100 text-emerald-700',
     CREATING: 'bg-amber-100 text-amber-700',
     FAILED: 'bg-red-100 text-red-700',
     DELETED: 'bg-slate-100 text-slate-500',
   };
-
   const completedBackups = backups.filter(
     (backup) => backup.status === 'COMPLETED'
   );
-
   const backupTypeLabel = (type) =>
     type === 'data_only'
       ? 'Data Only'
       : type === 'full'
         ? 'Full'
         : 'Operational';
-
   const doSave = async () => {
     if (bkEncrypt && !bkPassword) {
       toast({
@@ -259,9 +220,7 @@ export default function DatabaseManagement() {
       });
       return;
     }
-
     setBusy(true);
-
     try {
       const res = await base44.functions.invoke('databaseBackup', {
         name: bkName,
@@ -270,36 +229,29 @@ export default function DatabaseManagement() {
         encrypt: bkEncrypt,
         password: bkEncrypt ? bkPassword : undefined,
       });
-
       const backup = res.data?.backup;
-
       toast({
         title: 'Backup berhasil dibuat',
         description: backup?.backup_code,
       });
-
       setLastBackup({
         code: backup?.backup_code,
         fileName: backup?.file_name,
         size: backup?.file_size,
       });
-
       try {
         const dl = await base44.functions.invoke('databaseDownloadBackup', {
           backup_id: backup.id,
         });
-
         const downloadFileName =
           makeBackupDownloadName(
             bkName,
             backup?.backup_code || 'LABPRO_BACKUP'
           );
-
         await triggerDownload(
           dl.data.signed_url,
           downloadFileName
         );
-
         toast({
           title: 'File terunduh',
           description: downloadFileName,
@@ -311,7 +263,6 @@ export default function DatabaseManagement() {
           description: error.response?.data?.error || error.message,
         });
       }
-
       loadBackups();
     } catch (error) {
       toast({
@@ -323,17 +274,13 @@ export default function DatabaseManagement() {
       setBusy(false);
     }
   };
-
   const downloadBackup = async (backup) => {
     setBusy(true);
-
     try {
       const dl = await base44.functions.invoke('databaseDownloadBackup', {
         backup_id: backup.id,
       });
-
       await triggerDownload(dl.data.signed_url, dl.data.file_name);
-
       toast({
         title: 'File terunduh',
         description: dl.data.file_name,
@@ -348,19 +295,15 @@ export default function DatabaseManagement() {
       setBusy(false);
     }
   };
-
   const reDownloadLast = async () => {
     if (!lastBackup) return;
-
     const rec = backups.find(
       (backup) => backup.backup_code === lastBackup.code
     );
-
     if (rec) {
       await downloadBackup(rec);
     }
   };
-
   const doReset = async () => {
     if (resetPhrase !== RESET_CONFIRM_PHRASE) {
       toast({
@@ -369,7 +312,6 @@ export default function DatabaseManagement() {
       });
       return;
     }
-
     if (!resetAck) {
       toast({
         variant: 'destructive',
@@ -377,7 +319,6 @@ export default function DatabaseManagement() {
       });
       return;
     }
-
     if (!resetPassword) {
       toast({
         variant: 'destructive',
@@ -385,9 +326,7 @@ export default function DatabaseManagement() {
       });
       return;
     }
-
     setBusy(true);
-
     try {
       const res = await base44.functions.invoke('databaseReset', {
         mode: resetMode,
@@ -395,13 +334,11 @@ export default function DatabaseManagement() {
         skipBackup,
         confirm: resetPhrase,
       });
-
       toast({
         title: 'Reset selesai',
         description:
           `Mode ${resetMode} • ${res.data?.sequencesReset || 0} sequence direset`,
       });
-
       setResetOpen(false);
       setResetPhrase('');
       setResetAck(false);
@@ -417,7 +354,6 @@ export default function DatabaseManagement() {
       setBusy(false);
     }
   };
-
   const doRestore = async () => {
     if (!restoreId) {
       toast({
@@ -426,7 +362,6 @@ export default function DatabaseManagement() {
       });
       return;
     }
-
     if (restorePhrase !== RESTORE_CONFIRM_PHRASE) {
       toast({
         variant: 'destructive',
@@ -434,7 +369,6 @@ export default function DatabaseManagement() {
       });
       return;
     }
-
     if (!restoreAck) {
       toast({
         variant: 'destructive',
@@ -442,8 +376,36 @@ export default function DatabaseManagement() {
       });
       return;
     }
+    if (resumableSession) {
+      toast({
+        variant: 'destructive',
+        title: 'Masih ada restore yang belum selesai',
+        description: 'Lanjutkan checkpoint restore terlebih dahulu.',
+      });
+      return;
+    }
+
+    const selectedBackup =
+      backups.find((backup) => backup.id === restoreId) || null;
 
     setBusy(true);
+    setRestoreProgress({
+      source: 'stored',
+      status: 'PREPARING',
+      phase: 'PREPARE',
+      percent: 0,
+      entity: '',
+      fields: [],
+      batch: 0,
+      totalBatches: 0,
+      batchFrom: 0,
+      batchTo: 0,
+      entityProcessed: 0,
+      entityRecords: 0,
+      totalProcessed: 0,
+      totalRecords: Number(selectedBackup?.record_count || 0),
+      message: 'Memvalidasi backup tersimpan dan membuat restore session...',
+    });
 
     try {
       const res = await base44.functions.invoke('databaseRestore', {
@@ -453,27 +415,112 @@ export default function DatabaseManagement() {
         autoBackup: true,
       });
 
-      toast({
-        title: 'Restore selesai',
-        description: res.data?.backup_code,
+      const prepare = res?.data || {};
+
+      if (!prepare.ok || !prepare.session_id) {
+        throw new Error('Restore session gagal dibuat.');
+      }
+
+      const activeSession = {
+        id: prepare.session_id,
+        session_code: prepare.session_code || '',
+        backup_code: prepare.backup_code || '',
+        file_name:
+          selectedBackup?.file_name ||
+          selectedBackup?.backup_name ||
+          prepare.backup_code ||
+          'Stored backup',
+        total_records: Number(prepare.total_records || 0),
+        current_entity: '',
+        current_offset: 0,
+        status: prepare.status || 'READY',
+        source: 'stored',
+      };
+
+      setResumableSession(activeSession);
+
+      localStorage.setItem(
+        ACTIVE_RESTORE_STORAGE_KEY,
+        JSON.stringify({
+          id: activeSession.id,
+          sessionCode: activeSession.session_code,
+          backupCode: activeSession.backup_code,
+          fileName: activeSession.file_name,
+          totalRecords: activeSession.total_records,
+          source: 'stored',
+        })
+      );
+
+      setUploadedFile({
+        file_uri: '',
+        file_name: activeSession.file_name,
+        file_size: Number(selectedBackup?.file_size || 0),
+        source: 'stored',
+      });
+
+      setRestoreProgress({
+        source: 'stored',
+        status: prepare.status || 'READY',
+        phase: 'PREPARE',
+        percent: 0,
+        entity: '',
+        fields: [],
+        batch: 0,
+        totalBatches: 0,
+        batchFrom: 0,
+        batchTo: 0,
+        entityProcessed: 0,
+        entityRecords: 0,
+        totalProcessed: Number(prepare.total_processed || 0),
+        totalRecords: Number(prepare.total_records || 0),
+        entityTotal: Number(prepare.entity_total || 0),
+        entities: prepare.entities || [],
+        sessionCode: prepare.session_code || '',
+        backupCode: prepare.backup_code || '',
+        message: 'Restore session siap. Memulai proses batch...',
       });
 
       setRestoreOpen(false);
       setRestorePhrase('');
       setRestoreAck(false);
       setRestoreId('');
-      loadBackups();
+      setFileOpen(true);
+
+      await runRestoreSession(activeSession, {
+        isResume: false,
+      });
+
     } catch (error) {
+      const errorData = error?.response?.data || {};
+      const errorMessage =
+        errorData.error ||
+        error?.message ||
+        'Restore preparation gagal';
+
+      clearActiveRestoreSession();
+
+      setRestoreProgress((current) => ({
+        ...(current || {}),
+        source: 'stored',
+        status: 'FAILED',
+        phase: current?.phase || 'PREPARE',
+        message: errorMessage,
+        errorEntity: errorData.error_entity || '',
+        errorOffset: Number(errorData.error_offset || 0),
+        errorFields: Array.isArray(errorData.error_fields)
+          ? errorData.error_fields
+          : [],
+      }));
+
       toast({
         variant: 'destructive',
-        title: 'Restore gagal',
-        description: error.response?.data?.error || error.message,
+        title: 'Restore backup tersimpan gagal dipersiapkan',
+        description: errorMessage,
       });
     } finally {
       setBusy(false);
     }
   };
-
   const resetFileState = () => {
     setUploadedFile(null);
     setPreview(null);
@@ -483,17 +530,14 @@ export default function DatabaseManagement() {
     setFilePhrase('');
     setFileAck(false);
     setRestoreProgress(null);
-
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
   };
-
   const validateFile = async (fileUri, fileName, fileSize, password) => {
     setValidateError('');
     setPreview(null);
     setNeedsPassword(false);
-
     try {
       const res = await base44.functions.invoke('databaseValidateRestoreFile', {
         file_uri: fileUri,
@@ -501,12 +545,10 @@ export default function DatabaseManagement() {
         file_size: fileSize,
         password,
       });
-
       setPreview(res.data?.preview);
       setNeedsPassword(false);
     } catch (error) {
       const data = error.response?.data;
-
       if (data?.needsPassword) {
         setNeedsPassword(true);
         setValidateError(
@@ -520,7 +562,6 @@ export default function DatabaseManagement() {
       }
     }
   };
-
   const onPickFile = async (event) => {
     if (resumableSession) {
       toast({
@@ -530,10 +571,8 @@ export default function DatabaseManagement() {
       });
       return;
     }
-
     const file = event.target.files?.[0];
     if (!file) return;
-
     if (file.size > MAX_RESTORE_FILE_SIZE) {
       toast({
         variant: 'destructive',
@@ -542,19 +581,16 @@ export default function DatabaseManagement() {
       });
       return;
     }
-
     setBusy(true);
     resetFileState();
-
     try {
       const up = await base44.integrations.Core.UploadPrivateFile({ file });
-
       setUploadedFile({
         file_uri: up.file_uri,
         file_name: file.name,
         file_size: file.size,
+        source: 'file',
       });
-
       await validateFile(
         up.file_uri,
         file.name,
@@ -571,7 +607,6 @@ export default function DatabaseManagement() {
       setBusy(false);
     }
   };
-
   const revalidateWithPassword = async () => {
     if (!uploadedFile || !filePassword) {
       toast({
@@ -580,7 +615,6 @@ export default function DatabaseManagement() {
       });
       return;
     }
-
     setBusy(true);
     try {
       await validateFile(
@@ -593,10 +627,8 @@ export default function DatabaseManagement() {
       setBusy(false);
     }
   };
-
   const invokeRestoreBatchWithRetry = async (sessionId) => {
     let lastError = null;
-
     for (
       let attempt = 0;
       attempt < MAX_NETWORK_RETRIES;
@@ -608,20 +640,16 @@ export default function DatabaseManagement() {
         });
       } catch (error) {
         lastError = error;
-
         if (!isTransientNetworkError(error)) {
           throw error;
         }
-
         if (attempt >= MAX_NETWORK_RETRIES - 1) {
           break;
         }
-
         const delay =
           NETWORK_RETRY_DELAYS[
             Math.min(attempt, NETWORK_RETRY_DELAYS.length - 1)
           ];
-
         setRestoreProgress((current) => ({
           ...(current || {}),
           status: 'RETRYING',
@@ -630,21 +658,21 @@ export default function DatabaseManagement() {
             `${attempt + 1}/${MAX_NETWORK_RETRIES - 1} ` +
             `dalam ${Math.ceil(delay / 1000)} detik...`,
         }));
-
         await wait(delay);
       }
     }
-
     const finalError =
       lastError instanceof Error
         ? lastError
         : new Error(String(lastError || 'Koneksi restore gagal'));
-
     finalError.recoverable = true;
     throw finalError;
   };
-
   const mapBatchProgress = (progress, sessionMeta = {}) => ({
+    source:
+      progress.source ||
+      sessionMeta.source ||
+      'file',
     status: progress.status || 'RUNNING',
     phase: progress.phase || 'RESTORE',
     percent: Number(progress.progress_percent || 0),
@@ -699,19 +727,20 @@ export default function DatabaseManagement() {
               : `Menulis ${progress.current_entity || 'data'}...`
       ),
   });
-
   const runRestoreSession = async (
     sessionMeta,
     { isResume = true } = {}
   ) => {
     const sessionId = sessionMeta?.id;
     if (!sessionId) return;
-
     setBusy(true);
     setRestoreRunning(true);
-
     setRestoreProgress((current) => ({
       ...(current || {}),
+      source:
+        current?.source ||
+        sessionMeta.source ||
+        'file',
       status: 'RUNNING',
       phase: current?.phase || 'RESTORE',
       entity: current?.entity || sessionMeta.current_entity || '',
@@ -738,25 +767,19 @@ export default function DatabaseManagement() {
         ? 'Melanjutkan restore dari checkpoint terakhir...'
         : 'Restore session siap. Memulai proses batch...',
     }));
-
     try {
       let done = false;
       let safetyCounter = 0;
-
       while (!done) {
         safetyCounter += 1;
-
         if (safetyCounter > 20000) {
           throw new Error(
             'Restore dihentikan karena jumlah batch melebihi batas keamanan.'
           );
         }
-
         const batchRes =
           await invokeRestoreBatchWithRetry(sessionId);
-
         const progress = batchRes?.data || {};
-
         if (
           progress.status === 'FAILED' ||
           progress.ok === false
@@ -767,26 +790,20 @@ export default function DatabaseManagement() {
                 progress.error_entity || 'entity tidak diketahui'
               }`
           );
-
           restoreError.restoreData = progress;
           throw restoreError;
         }
-
         setRestoreProgress(
           mapBatchProgress(progress, sessionMeta)
         );
-
         done =
           progress.done === true ||
           progress.status === 'COMPLETED';
-
         if (!done) {
           await wait(150);
         }
       }
-
       clearActiveRestoreSession();
-
       setRestoreProgress((current) => ({
         ...current,
         status: 'COMPLETED',
@@ -794,19 +811,17 @@ export default function DatabaseManagement() {
         percent: 100,
         message: 'Restore selesai dan terverifikasi 100%.',
       }));
-
       toast({
-        title: 'Restore dari file selesai',
+        title: 'Restore selesai',
         description: `${
           sessionMeta.backup_code ||
           sessionMeta.backupCode ||
           ''
         } · 100% verified`,
       });
-
       await wait(800);
-
       setFileOpen(false);
+      setRestoreOpen(false);
       resetFileState();
       loadBackups();
     } catch (error) {
@@ -814,16 +829,13 @@ export default function DatabaseManagement() {
         error?.response?.data ||
         error?.restoreData ||
         {};
-
       const errorMessage =
         errorData.error ||
         error?.message ||
         'Restore gagal';
-
       const recoverable =
         error?.recoverable ||
         isTransientNetworkError(error);
-
       setRestoreProgress((current) => ({
         ...(current || {}),
         status: recoverable ? 'PAUSED' : 'FAILED',
@@ -844,10 +856,8 @@ export default function DatabaseManagement() {
           ? errorData.error_fields
           : [],
       }));
-
       if (recoverable) {
         setResumableSession(sessionMeta);
-
         localStorage.setItem(
           ACTIVE_RESTORE_STORAGE_KEY,
           JSON.stringify({
@@ -869,9 +879,11 @@ export default function DatabaseManagement() {
               sessionMeta.totalRecords ||
               0
             ),
+            source:
+              sessionMeta.source ||
+              'file',
           })
         );
-
         toast({
           variant: 'destructive',
           title: 'Koneksi terputus',
@@ -880,7 +892,6 @@ export default function DatabaseManagement() {
         });
       } else {
         clearActiveRestoreSession();
-
         toast({
           variant: 'destructive',
           title: 'Restore berhenti',
@@ -894,7 +905,6 @@ export default function DatabaseManagement() {
       setRestoreRunning(false);
     }
   };
-
   const doFileRestore = async () => {
     if (resumableSession) {
       toast({
@@ -904,7 +914,6 @@ export default function DatabaseManagement() {
       });
       return;
     }
-
     if (!uploadedFile) {
       toast({
         variant: 'destructive',
@@ -912,7 +921,6 @@ export default function DatabaseManagement() {
       });
       return;
     }
-
     if (!preview) {
       toast({
         variant: 'destructive',
@@ -920,7 +928,6 @@ export default function DatabaseManagement() {
       });
       return;
     }
-
     if (filePhrase !== RESTORE_CONFIRM_PHRASE) {
       toast({
         variant: 'destructive',
@@ -928,7 +935,6 @@ export default function DatabaseManagement() {
       });
       return;
     }
-
     if (!fileAck) {
       toast({
         variant: 'destructive',
@@ -936,7 +942,6 @@ export default function DatabaseManagement() {
       });
       return;
     }
-
     if (preview?.encrypted || needsPassword) {
       toast({
         variant: 'destructive',
@@ -946,11 +951,10 @@ export default function DatabaseManagement() {
       });
       return;
     }
-
     setBusy(true);
     setRestoreRunning(true);
-
     setRestoreProgress({
+      source: 'file',
       status: 'PREPARING',
       phase: 'PREPARE',
       percent: 0,
@@ -971,7 +975,6 @@ export default function DatabaseManagement() {
       message:
         'Memvalidasi backup dan membuat restore session...',
     });
-
     try {
       const prepareRes =
         await base44.functions.invoke(
@@ -985,13 +988,10 @@ export default function DatabaseManagement() {
             password: undefined,
           }
         );
-
       const prepare = prepareRes?.data || {};
-
       if (!prepare.ok || !prepare.session_id) {
         throw new Error('Restore session gagal dibuat.');
       }
-
       const activeSession = {
         id: prepare.session_id,
         session_code: prepare.session_code || '',
@@ -1001,10 +1001,9 @@ export default function DatabaseManagement() {
         current_entity: '',
         current_offset: 0,
         status: prepare.status || 'READY',
+        source: 'file',
       };
-
       setResumableSession(activeSession);
-
       localStorage.setItem(
         ACTIVE_RESTORE_STORAGE_KEY,
         JSON.stringify({
@@ -1013,10 +1012,11 @@ export default function DatabaseManagement() {
           backupCode: activeSession.backup_code,
           fileName: activeSession.file_name,
           totalRecords: activeSession.total_records,
+          source: 'file',
         })
       );
-
       setRestoreProgress({
+        source: 'file',
         status: prepare.status || 'READY',
         phase: 'PREPARE',
         percent: 0,
@@ -1036,7 +1036,6 @@ export default function DatabaseManagement() {
         backupCode: prepare.backup_code || '',
         message: 'Restore session siap. Memulai proses batch...',
       });
-
       await runRestoreSession(activeSession, {
         isResume: false,
       });
@@ -1046,11 +1045,10 @@ export default function DatabaseManagement() {
         errorData.error ||
         error?.message ||
         'Restore preparation gagal';
-
       clearActiveRestoreSession();
-
       setRestoreProgress((current) => ({
         ...(current || {}),
+        source: 'file',
         status: 'FAILED',
         phase: current?.phase || 'PREPARE',
         message: errorMessage,
@@ -1060,7 +1058,6 @@ export default function DatabaseManagement() {
           ? errorData.error_fields
           : [],
       }));
-
       toast({
         variant: 'destructive',
         title: 'Restore gagal dipersiapkan',
@@ -1071,7 +1068,6 @@ export default function DatabaseManagement() {
       setRestoreRunning(false);
     }
   };
-
   const deleteBackup = async (backup) => {
     if (
       !window.confirm(
@@ -1081,12 +1077,10 @@ export default function DatabaseManagement() {
     ) {
       return;
     }
-
     try {
       await base44.entities.DatabaseBackup.update(backup.id, {
         status: 'DELETED',
       });
-
       loadBackups();
     } catch (error) {
       toast({
@@ -1096,21 +1090,18 @@ export default function DatabaseManagement() {
       });
     }
   };
-
   return (
     <div className="p-4 sm:p-6 max-w-6xl mx-auto">
       <PageHeader
         title="Database Management"
         description={`Environment: ${APP_ENVIRONMENT.toUpperCase()} • Khusus Administrator`}
       />
-
       {IS_PRODUCTION && (
         <div className="mb-4 bg-red-50 border border-red-300 rounded-lg px-4 py-3 text-[13px] text-red-700 flex items-center gap-2">
           <ShieldAlert className="w-4 h-4 shrink-0" />
           Reset &amp; Restore dinonaktifkan pada environment Production. Backup &amp; Download tetap tersedia.
         </div>
       )}
-
       <div className="flex flex-wrap gap-2 mb-5">
         <Button
           onClick={() => setSaveOpen(true)}
@@ -1120,7 +1111,6 @@ export default function DatabaseManagement() {
           <Save className="w-4 h-4" />
           Buat Backup
         </Button>
-
         <Button
           variant="outline"
           onClick={() => {
@@ -1133,7 +1123,6 @@ export default function DatabaseManagement() {
           <FileUp className="w-4 h-4" />
           Restore dari File
         </Button>
-
         <Button
           variant="outline"
           onClick={() => setRestoreOpen(true)}
@@ -1143,7 +1132,6 @@ export default function DatabaseManagement() {
           <Upload className="w-4 h-4" />
           Restore Backup Tersimpan
         </Button>
-
         <Button
           variant="destructive"
           onClick={() => setResetOpen(true)}
@@ -1154,7 +1142,6 @@ export default function DatabaseManagement() {
           Reset Database
         </Button>
       </div>
-
       {lastBackup && (
         <div className="mb-5 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-start gap-2">
@@ -1169,7 +1156,6 @@ export default function DatabaseManagement() {
               </div>
             </div>
           </div>
-
           <Button
             size="sm"
             variant="outline"
@@ -1182,12 +1168,10 @@ export default function DatabaseManagement() {
           </Button>
         </div>
       )}
-
       <div className="bg-white border rounded-lg overflow-hidden">
         <div className="px-4 py-3 border-b font-semibold text-sm">
           Riwayat Backup
         </div>
-
         {loading ? (
           <div className="p-8 text-center text-sm text-slate-500">
             Memuat backup...
@@ -1201,56 +1185,34 @@ export default function DatabaseManagement() {
             <table className="w-full text-sm">
               <thead className="bg-slate-50 text-slate-600">
                 <tr>
-                  <th className="text-left px-4 py-3">
-                    Kode / Nama
-                  </th>
-                  <th className="text-left px-4 py-3">
-                    Tipe
-                  </th>
-                  <th className="text-left px-4 py-3">
-                    Dibuat
-                  </th>
-                  <th className="text-left px-4 py-3">
-                    Ukuran
-                  </th>
-                  <th className="text-left px-4 py-3">
-                    Status
-                  </th>
-                  <th className="text-right px-4 py-3">
-                    Aksi
-                  </th>
+                  <th className="text-left px-4 py-3">Kode / Nama</th>
+                  <th className="text-left px-4 py-3">Tipe</th>
+                  <th className="text-left px-4 py-3">Dibuat</th>
+                  <th className="text-left px-4 py-3">Ukuran</th>
+                  <th className="text-left px-4 py-3">Status</th>
+                  <th className="text-right px-4 py-3">Aksi</th>
                 </tr>
               </thead>
-
               <tbody className="divide-y">
                 {backups.map((backup) => (
-                  <tr
-                    key={backup.id}
-                    className="hover:bg-slate-50"
-                  >
+                  <tr key={backup.id} className="hover:bg-slate-50">
                     <td className="px-4 py-3">
                       <div className="font-medium">
                         {backup.backup_code || '-'}
                       </div>
                       <div className="text-xs text-slate-500">
-                        {backup.backup_name ||
-                          backup.file_name ||
-                          '-'}
+                        {backup.backup_name || backup.file_name || '-'}
                       </div>
                     </td>
-
                     <td className="px-4 py-3">
                       {backupTypeLabel(backup.backup_type)}
                     </td>
-
                     <td className="px-4 py-3 whitespace-nowrap">
                       {fmtDate(backup.created_at)}
                     </td>
-
                     <td className="px-4 py-3 whitespace-nowrap">
                       {fmtSize(backup.file_size)}
                     </td>
-
                     <td className="px-4 py-3">
                       <span
                         className={`px-2 py-1 rounded-full text-xs font-medium ${
@@ -1260,12 +1222,10 @@ export default function DatabaseManagement() {
                       >
                         {backup.status || '-'}
                       </span>
-
                       {backup.encrypted && (
                         <Lock className="inline w-3 h-3 ml-1" />
                       )}
                     </td>
-
                     <td className="px-4 py-3">
                       <div className="flex justify-end gap-1">
                         <Button
@@ -1277,24 +1237,16 @@ export default function DatabaseManagement() {
                             backup.status !== 'COMPLETED' ||
                             !downloadAllowed
                           }
-                          onClick={() =>
-                            downloadBackup(backup)
-                          }
+                          onClick={() => downloadBackup(backup)}
                         >
                           <Download className="w-4 h-4" />
                         </Button>
-
                         <Button
                           size="icon"
                           variant="ghost"
                           title="Hapus record"
-                          disabled={
-                            busy ||
-                            backup.status === 'DELETED'
-                          }
-                          onClick={() =>
-                            deleteBackup(backup)
-                          }
+                          disabled={busy || backup.status === 'DELETED'}
+                          onClick={() => deleteBackup(backup)}
                         >
                           <Trash2 className="w-4 h-4 text-red-600" />
                         </Button>
@@ -1316,87 +1268,33 @@ export default function DatabaseManagement() {
         <div className="space-y-4">
           <div>
             <Label>Nama backup</Label>
-            <Input
-              value={bkName}
-              onChange={(event) =>
-                setBkName(event.target.value)
-              }
-              placeholder="Opsional"
-            />
+            <Input value={bkName} onChange={(e) => setBkName(e.target.value)} placeholder="Opsional" />
           </div>
-
           <div>
             <Label>Catatan</Label>
-            <Textarea
-              value={bkNotes}
-              onChange={(event) =>
-                setBkNotes(event.target.value)
-              }
-              placeholder="Opsional"
-            />
+            <Textarea value={bkNotes} onChange={(e) => setBkNotes(e.target.value)} placeholder="Opsional" />
           </div>
-
           <div>
             <Label>Tipe backup</Label>
-            <select
-              className="w-full h-10 rounded-md border px-3 bg-white"
-              value={bkType}
-              onChange={(event) =>
-                setBkType(event.target.value)
-              }
-            >
-              <option value="operational">
-                Operational
-              </option>
-              <option value="data_only">
-                Data Only
-              </option>
-              <option value="full">
-                Full
-              </option>
+            <select className="w-full h-10 rounded-md border px-3 bg-white" value={bkType} onChange={(e) => setBkType(e.target.value)}>
+              <option value="operational">Operational</option>
+              <option value="data_only">Data Only</option>
+              <option value="full">Full</option>
             </select>
           </div>
-
           <div className="flex items-center justify-between">
-            <Label htmlFor="encrypt-backup">
-              Enkripsi file
-            </Label>
-
-            <Switch
-              id="encrypt-backup"
-              checked={bkEncrypt}
-              onCheckedChange={setBkEncrypt}
-            />
+            <Label htmlFor="encrypt-backup">Enkripsi file</Label>
+            <Switch id="encrypt-backup" checked={bkEncrypt} onCheckedChange={setBkEncrypt} />
           </div>
-
           {bkEncrypt && (
             <div>
               <Label>Password enkripsi</Label>
-              <Input
-                type="password"
-                value={bkPassword}
-                onChange={(event) =>
-                  setBkPassword(event.target.value)
-                }
-              />
+              <Input type="password" value={bkPassword} onChange={(e) => setBkPassword(e.target.value)} />
             </div>
           )}
-
           <div className="flex justify-end gap-2 pt-2">
-            <Button
-              variant="outline"
-              onClick={() => setSaveOpen(false)}
-              disabled={busy}
-            >
-              Batal
-            </Button>
-
-            <Button
-              onClick={doSave}
-              disabled={busy}
-            >
-              {busy ? 'Memproses...' : 'Buat & Download'}
-            </Button>
+            <Button variant="outline" onClick={() => setSaveOpen(false)} disabled={busy}>Batal</Button>
+            <Button onClick={doSave} disabled={busy}>{busy ? 'Memproses...' : 'Buat & Download'}</Button>
           </div>
         </div>
       </FormModal>
@@ -1410,91 +1308,36 @@ export default function DatabaseManagement() {
           <div className="rounded-md bg-red-50 border border-red-200 p-3 text-sm text-red-700">
             Reset menghapus data sesuai mode yang dipilih. Backup otomatis dibuat kecuali opsi dilewati.
           </div>
-
           <div>
             <Label>Mode reset</Label>
-            <select
-              className="w-full h-10 rounded-md border px-3 bg-white"
-              value={resetMode}
-              onChange={(event) =>
-                setResetMode(event.target.value)
-              }
-            >
-              <option value="transaction">
-                Transaction
-              </option>
-              <option value="full">
-                Full
-              </option>
+            <select className="w-full h-10 rounded-md border px-3 bg-white" value={resetMode} onChange={(e) => setResetMode(e.target.value)}>
+              <option value="transaction">Transaction</option>
+              <option value="full">Full</option>
             </select>
           </div>
-
           <div className="flex items-center justify-between">
             <Label>Reset sequence nomor</Label>
-            <Switch
-              checked={resetSequences}
-              onCheckedChange={setResetSequences}
-            />
+            <Switch checked={resetSequences} onCheckedChange={setResetSequences} />
           </div>
-
           <div className="flex items-center justify-between">
             <Label>Lewati backup otomatis</Label>
-            <Switch
-              checked={skipBackup}
-              onCheckedChange={setSkipBackup}
-            />
+            <Switch checked={skipBackup} onCheckedChange={setSkipBackup} />
           </div>
-
           <div>
             <Label>Ketik kalimat konfirmasi</Label>
-            <Input
-              value={resetPhrase}
-              onChange={(event) =>
-                setResetPhrase(event.target.value)
-              }
-              placeholder={RESET_CONFIRM_PHRASE}
-            />
+            <Input value={resetPhrase} onChange={(e) => setResetPhrase(e.target.value)} placeholder={RESET_CONFIRM_PHRASE} />
           </div>
-
           <label className="flex gap-2 items-start text-sm">
-            <input
-              type="checkbox"
-              checked={resetAck}
-              onChange={(event) =>
-                setResetAck(event.target.checked)
-              }
-              className="mt-1"
-            />
+            <input type="checkbox" checked={resetAck} onChange={(e) => setResetAck(e.target.checked)} className="mt-1" />
             Saya memahami data akan dihapus.
           </label>
-
           <div>
             <Label>Password administrator</Label>
-            <Input
-              type="password"
-              value={resetPassword}
-              onChange={(event) =>
-                setResetPassword(event.target.value)
-              }
-            />
+            <Input type="password" value={resetPassword} onChange={(e) => setResetPassword(e.target.value)} />
           </div>
-
           <div className="flex justify-end gap-2">
-            <Button
-              variant="outline"
-              onClick={() => setResetOpen(false)}
-              disabled={busy}
-            >
-              Batal
-            </Button>
-
-            <Button
-              variant="destructive"
-              onClick={doReset}
-              disabled={busy}
-            >
-              {busy ? 'Memproses...' : 'Reset Database'}
-            </Button>
+            <Button variant="outline" onClick={() => setResetOpen(false)} disabled={busy}>Batal</Button>
+            <Button variant="destructive" onClick={doReset} disabled={busy}>{busy ? 'Memproses...' : 'Reset Database'}</Button>
           </div>
         </div>
       </FormModal>
@@ -1507,87 +1350,33 @@ export default function DatabaseManagement() {
         <div className="space-y-4">
           <div>
             <Label>Pilih backup</Label>
-            <select
-              className="w-full h-10 rounded-md border px-3 bg-white"
-              value={restoreId}
-              onChange={(event) =>
-                setRestoreId(event.target.value)
-              }
-            >
-              <option value="">
-                Pilih backup...
-              </option>
-
+            <select className="w-full h-10 rounded-md border px-3 bg-white" value={restoreId} onChange={(e) => setRestoreId(e.target.value)}>
+              <option value="">Pilih backup...</option>
               {completedBackups.map((backup) => (
-                <option
-                  key={backup.id}
-                  value={backup.id}
-                >
-                  {backup.backup_code} ·{' '}
-                  {backup.backup_name ||
-                    backup.file_name ||
-                    '-'}
+                <option key={backup.id} value={backup.id}>
+                  {backup.backup_code} · {backup.backup_name || backup.file_name || '-'}
                 </option>
               ))}
             </select>
           </div>
-
           <div>
             <Label>Mode restore</Label>
-            <select
-              className="w-full h-10 rounded-md border px-3 bg-white"
-              value={restoreMode}
-              onChange={(event) =>
-                setRestoreMode(event.target.value)
-              }
-            >
-              <option value="operational">
-                Operational
-              </option>
-              <option value="full">
-                Full
-              </option>
+            <select className="w-full h-10 rounded-md border px-3 bg-white" value={restoreMode} onChange={(e) => setRestoreMode(e.target.value)}>
+              <option value="operational">Operational</option>
+              <option value="full">Full</option>
             </select>
           </div>
-
           <div>
             <Label>Ketik kalimat konfirmasi</Label>
-            <Input
-              value={restorePhrase}
-              onChange={(event) =>
-                setRestorePhrase(event.target.value)
-              }
-              placeholder={RESTORE_CONFIRM_PHRASE}
-            />
+            <Input value={restorePhrase} onChange={(e) => setRestorePhrase(e.target.value)} placeholder={RESTORE_CONFIRM_PHRASE} />
           </div>
-
           <label className="flex gap-2 items-start text-sm">
-            <input
-              type="checkbox"
-              checked={restoreAck}
-              onChange={(event) =>
-                setRestoreAck(event.target.checked)
-              }
-              className="mt-1"
-            />
+            <input type="checkbox" checked={restoreAck} onChange={(e) => setRestoreAck(e.target.checked)} className="mt-1" />
             Saya memahami data aktif akan diganti.
           </label>
-
           <div className="flex justify-end gap-2">
-            <Button
-              variant="outline"
-              onClick={() => setRestoreOpen(false)}
-              disabled={busy}
-            >
-              Batal
-            </Button>
-
-            <Button
-              onClick={doRestore}
-              disabled={busy}
-            >
-              {busy ? 'Memproses...' : 'Mulai Restore'}
-            </Button>
+            <Button variant="outline" onClick={() => setRestoreOpen(false)} disabled={busy}>Batal</Button>
+            <Button onClick={doRestore} disabled={busy}>{busy ? 'Memproses...' : 'Mulai Restore'}</Button>
           </div>
         </div>
       </FormModal>
@@ -1604,36 +1393,27 @@ export default function DatabaseManagement() {
             });
             return;
           }
-
           setFileOpen(false);
           resetFileState();
         }}
-        title="Restore dari Backup File"
+        title={
+          restoreProgress?.source === 'stored'
+            ? 'Restore Backup Tersimpan'
+            : 'Restore dari Backup File'
+        }
       >
         <div className="space-y-4">
           {resumableSession && !restoreRunning && (
             <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-              <div className="font-semibold">
-                Restore belum selesai ditemukan
-              </div>
-
+              <div className="font-semibold">Restore belum selesai ditemukan</div>
               <div className="mt-1 text-xs">
-                {resumableSession.session_code ||
-                  resumableSession.sessionCode ||
-                  'Restore session'}
+                {resumableSession.session_code || resumableSession.sessionCode || 'Restore session'}
                 {' · '}
-                {resumableSession.current_entity ||
-                  'checkpoint tersimpan'}
-
-                {Number.isFinite(
-                  Number(resumableSession.current_offset)
-                )
-                  ? ` · offset ${Number(
-                      resumableSession.current_offset
-                    )}`
+                {resumableSession.current_entity || 'checkpoint tersimpan'}
+                {Number.isFinite(Number(resumableSession.current_offset))
+                  ? ` · offset ${Number(resumableSession.current_offset)}`
                   : ''}
               </div>
-
               <Button
                 className="mt-3"
                 onClick={() =>
@@ -1643,133 +1423,80 @@ export default function DatabaseManagement() {
                 }
                 disabled={busy || resumeChecking}
               >
-                {resumeChecking
-                  ? 'Memeriksa session...'
-                  : 'Lanjutkan Restore'}
+                {resumeChecking ? 'Memeriksa session...' : 'Lanjutkan Restore'}
               </Button>
             </div>
           )}
 
-          <div>
-            <Label>File backup JSON</Label>
-            <Input
-              ref={fileInputRef}
-              type="file"
-              accept=".json,application/json"
-              onChange={onPickFile}
-              disabled={
-                busy ||
-                restoreRunning ||
-                !!resumableSession
-              }
-            />
-          </div>
+          {restoreProgress?.source !== 'stored' && (
+            <div>
+              <Label>File backup JSON</Label>
+              <Input
+                ref={fileInputRef}
+                type="file"
+                accept=".json,application/json"
+                onChange={onPickFile}
+                disabled={busy || restoreRunning || !!resumableSession}
+              />
+            </div>
+          )}
 
           {uploadedFile && (
             <div className="rounded-md border p-3 text-sm">
-              <div className="font-medium">
-                {uploadedFile.file_name}
-              </div>
-              <div className="text-xs text-slate-500">
-                {fmtSize(uploadedFile.file_size)}
-              </div>
+              <div className="font-medium">{uploadedFile.file_name}</div>
+              <div className="text-xs text-slate-500">{fmtSize(uploadedFile.file_size)}</div>
             </div>
           )}
 
-          {needsPassword && (
+          {restoreProgress?.source !== 'stored' && needsPassword && (
             <div className="space-y-2">
               <Label>Password file</Label>
               <div className="flex gap-2">
-                <Input
-                  type="password"
-                  value={filePassword}
-                  onChange={(event) =>
-                    setFilePassword(event.target.value)
-                  }
-                  disabled={restoreRunning}
-                />
-                <Button
-                  variant="outline"
-                  onClick={revalidateWithPassword}
-                  disabled={busy || restoreRunning}
-                >
-                  Validasi
-                </Button>
+                <Input type="password" value={filePassword} onChange={(e) => setFilePassword(e.target.value)} disabled={restoreRunning} />
+                <Button variant="outline" onClick={revalidateWithPassword} disabled={busy || restoreRunning}>Validasi</Button>
               </div>
             </div>
           )}
 
-          {validateError && (
+          {restoreProgress?.source !== 'stored' && validateError && (
             <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
               {validateError}
             </div>
           )}
 
-          {preview && (
+          {restoreProgress?.source !== 'stored' && preview && (
             <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
               <div className="font-semibold flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4" />
                 File valid
               </div>
               <div className="mt-1">
-                {preview.backupId ||
-                  preview.backupCode ||
-                  preview.backup_code ||
-                  uploadedFile?.file_name}
+                {preview.backupId || preview.backupCode || preview.backup_code || uploadedFile?.file_name}
                 {' · '}
-                {preview.recordCount ??
-                  preview.record_count ??
-                  0}{' '}
-                record
-                {preview.encrypted
-                  ? ' · terenkripsi'
-                  : ''}
+                {preview.recordCount ?? preview.record_count ?? 0} record
+                {preview.encrypted ? ' · terenkripsi' : ''}
               </div>
             </div>
           )}
 
-          {preview &&
+          {restoreProgress?.source !== 'stored' &&
+            preview &&
             !restoreRunning &&
             !resumableSession && (
               <>
                 <div>
                   <Label>Mode restore</Label>
-                  <select
-                    className="w-full h-10 rounded-md border px-3 bg-white"
-                    value={fileMode}
-                    onChange={(event) =>
-                      setFileMode(event.target.value)
-                    }
-                  >
-                    <option value="operational">
-                      Operational
-                    </option>
-                    <option value="full">
-                      Full
-                    </option>
+                  <select className="w-full h-10 rounded-md border px-3 bg-white" value={fileMode} onChange={(e) => setFileMode(e.target.value)}>
+                    <option value="operational">Operational</option>
+                    <option value="full">Full</option>
                   </select>
                 </div>
-
                 <div>
                   <Label>Ketik kalimat konfirmasi</Label>
-                  <Input
-                    value={filePhrase}
-                    onChange={(event) =>
-                      setFilePhrase(event.target.value)
-                    }
-                    placeholder={RESTORE_CONFIRM_PHRASE}
-                  />
+                  <Input value={filePhrase} onChange={(e) => setFilePhrase(e.target.value)} placeholder={RESTORE_CONFIRM_PHRASE} />
                 </div>
-
                 <label className="flex gap-2 items-start text-sm">
-                  <input
-                    type="checkbox"
-                    checked={fileAck}
-                    onChange={(event) =>
-                      setFileAck(event.target.checked)
-                    }
-                    className="mt-1"
-                  />
+                  <input type="checkbox" checked={fileAck} onChange={(e) => setFileAck(e.target.checked)} className="mt-1" />
                   Saya memahami data aktif akan diganti.
                 </label>
               </>
@@ -1786,7 +1513,6 @@ export default function DatabaseManagement() {
                     {restoreProgress.message}
                   </div>
                 </div>
-
                 <div className="text-lg font-bold">
                   {Math.round(
                     Math.max(
@@ -1800,7 +1526,6 @@ export default function DatabaseManagement() {
                   %
                 </div>
               </div>
-
               <div className="h-2 rounded-full bg-slate-200 overflow-hidden">
                 <div
                   className={`h-full transition-all ${
@@ -1821,124 +1546,70 @@ export default function DatabaseManagement() {
                   }}
                 />
               </div>
-
               {restoreProgress.entity && (
                 <div className="grid grid-cols-2 gap-2 text-xs">
                   <div>
-                    <span className="text-slate-500">
-                      Entity
-                    </span>
-                    <div className="font-mono font-medium">
-                      {restoreProgress.entity}
-                    </div>
+                    <span className="text-slate-500">Entity</span>
+                    <div className="font-mono font-medium">{restoreProgress.entity}</div>
                   </div>
-
                   <div>
-                    <span className="text-slate-500">
-                      Batch
-                    </span>
-                    <div>
-                      {restoreProgress.batch || 0}
-                      {' / '}
-                      {restoreProgress.totalBatches || 0}
-                    </div>
+                    <span className="text-slate-500">Batch</span>
+                    <div>{restoreProgress.batch || 0} / {restoreProgress.totalBatches || 0}</div>
                   </div>
-
                   <div>
-                    <span className="text-slate-500">
-                      Entity record
-                    </span>
-                    <div>
-                      {restoreProgress.entityProcessed || 0}
-                      {' / '}
-                      {restoreProgress.entityRecords || 0}
-                    </div>
+                    <span className="text-slate-500">Entity record</span>
+                    <div>{restoreProgress.entityProcessed || 0} / {restoreProgress.entityRecords || 0}</div>
                   </div>
-
                   <div>
-                    <span className="text-slate-500">
-                      Total record
-                    </span>
-                    <div>
-                      {restoreProgress.totalProcessed || 0}
-                      {' / '}
-                      {restoreProgress.totalRecords || 0}
-                    </div>
+                    <span className="text-slate-500">Total record</span>
+                    <div>{restoreProgress.totalProcessed || 0} / {restoreProgress.totalRecords || 0}</div>
                   </div>
                 </div>
               )}
-
               {Array.isArray(restoreProgress.fields) &&
                 restoreProgress.fields.length > 0 && (
                   <div>
-                    <div className="text-xs text-slate-500 mb-1">
-                      Field yang ditulis
-                    </div>
+                    <div className="text-xs text-slate-500 mb-1">Field yang ditulis</div>
                     <div className="flex flex-wrap gap-1">
                       {restoreProgress.fields.map((field) => (
-                        <span
-                          key={field}
-                          className="px-1.5 py-0.5 rounded bg-slate-100 font-mono text-[10px]"
-                        >
+                        <span key={field} className="px-1.5 py-0.5 rounded bg-slate-100 font-mono text-[10px]">
                           {field}
                         </span>
                       ))}
                     </div>
                   </div>
                 )}
-
               {restoreProgress.status === 'FAILED' && (
                 <div className="rounded-md border border-red-200 bg-red-50 px-3 py-3 text-[11px] text-red-700">
                   <div className="flex items-start gap-2">
                     <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
                     <div className="min-w-0">
-                      <div className="font-semibold">
-                        Restore berhenti
-                      </div>
+                      <div className="font-semibold">Restore berhenti</div>
                       <div className="mt-1">
-                        {restoreProgress.message ||
-                          'Restore berhenti karena error.'}
+                        {restoreProgress.message || 'Restore berhenti karena error.'}
                       </div>
                     </div>
                   </div>
-
                   {restoreProgress.errorEntity && (
                     <div className="mt-3 pt-2 border-t border-red-200 space-y-1">
                       <div>
-                        <span className="font-medium">
-                          Entity:
-                        </span>{' '}
-                        <span className="font-mono">
-                          {restoreProgress.errorEntity}
-                        </span>
+                        <span className="font-medium">Entity:</span>{' '}
+                        <span className="font-mono">{restoreProgress.errorEntity}</span>
                       </div>
-
                       <div>
-                        <span className="font-medium">
-                          Record / Offset:
-                        </span>{' '}
+                        <span className="font-medium">Record / Offset:</span>{' '}
                         {Number(restoreProgress.errorOffset || 0) + 1}
                       </div>
-
-                      {Array.isArray(
-                        restoreProgress.errorFields
-                      ) &&
+                      {Array.isArray(restoreProgress.errorFields) &&
                         restoreProgress.errorFields.length > 0 && (
                           <div>
-                            <div className="font-medium mb-1">
-                              Field record:
-                            </div>
+                            <div className="font-medium mb-1">Field record:</div>
                             <div className="flex flex-wrap gap-1">
-                              {restoreProgress.errorFields.map(
-                                (field) => (
-                                  <span
-                                    key={field}
-                                    className="px-1.5 py-0.5 rounded bg-red-100 font-mono text-[10px]"
-                                  >
-                                    {field}
-                                  </span>
-                                )
-                              )}
+                              {restoreProgress.errorFields.map((field) => (
+                                <span key={field} className="px-1.5 py-0.5 rounded bg-red-100 font-mono text-[10px]">
+                                  {field}
+                                </span>
+                              ))}
                             </div>
                           </div>
                         )}
@@ -1946,16 +1617,10 @@ export default function DatabaseManagement() {
                   )}
                 </div>
               )}
-
               {restoreProgress.status === 'PAUSED' && (
                 <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-3 text-[11px] text-amber-800">
-                  <div className="font-semibold">
-                    Koneksi terputus — checkpoint tetap aman
-                  </div>
-                  <div className="mt-1">
-                    {restoreProgress.message}
-                  </div>
-
+                  <div className="font-semibold">Koneksi terputus — checkpoint tetap aman</div>
+                  <div className="mt-1">{restoreProgress.message}</div>
                   {resumableSession && !restoreRunning && (
                     <Button
                       size="sm"
@@ -1989,21 +1654,23 @@ export default function DatabaseManagement() {
               Batal
             </Button>
 
-            <Button
-              onClick={doFileRestore}
-              disabled={
-                busy ||
-                restoreRunning ||
-                !preview ||
-                !!resumableSession
-              }
-            >
-              {restoreRunning
-                ? 'Restore berjalan...'
-                : busy
-                  ? 'Memproses...'
-                  : 'Mulai Restore'}
-            </Button>
+            {restoreProgress?.source !== 'stored' && (
+              <Button
+                onClick={doFileRestore}
+                disabled={
+                  busy ||
+                  restoreRunning ||
+                  !preview ||
+                  !!resumableSession
+                }
+              >
+                {restoreRunning
+                  ? 'Restore berjalan...'
+                  : busy
+                    ? 'Memproses...'
+                    : 'Mulai Restore'}
+              </Button>
+            )}
           </div>
         </div>
       </FormModal>
