@@ -91,6 +91,12 @@ export default function Production() {
   const [gramasiMap, setGramasiMap] = useState({});
   const [premixPreview, setPremixPreview] = useState(null);
   const [premixConfirmOpen, setPremixConfirmOpen] = useState(false);
+
+  // UI UPGRADE v3.7 — production readiness dashboard
+  // READ ONLY: Recipe + RecipeIngredient + StockBalance.
+  const [productionReadiness, setProductionReadiness] = useState([]);
+  const [readinessLoading, setReadinessLoading] = useState(false);
+
   const [form, setForm] = useState({
     recipe_id: '',
     target_volume: 1000,
@@ -298,6 +304,170 @@ export default function Production() {
   );
 
   /* ==========================================================
+     PRODUCTION READINESS DASHBOARD
+     READ ONLY — Recipe + RecipeIngredient + Material + StockBalance.
+     Tidak membuat ProductionOrder dan tidak mengubah stok.
+  ========================================================== */
+  const buildProductionReadiness = useCallback(async () => {
+    if (!recipes.length || !materials.length) {
+      setProductionReadiness([]);
+      return;
+    }
+
+    setReadinessLoading(true);
+
+    try {
+      const matsById = Object.fromEntries(
+        materials.map(m => [m.id, m])
+      );
+
+      const pgMaterial = materials.find(
+        m => m.material_category === 'propylene_glycol'
+      );
+      const vgMaterial = materials.find(
+        m => m.material_category === 'vegetable_glycerin'
+      );
+
+      const rows = [];
+
+      for (const recipe of recipes) {
+        if (!canSelectRecipeForProduction(user, recipe)) continue;
+
+        const ingredients = await base44.entities.RecipeIngredient.filter({
+          recipe_id: recipe.id
+        });
+
+        const premix = recipe.recipe_type === 'PREMIX';
+        const basis = recipe.calculation_basis || 'W_W';
+        const target = Number(
+          premix
+            ? (recipe.target_quantity || 1000)
+            : (recipe.target_volume || 1000)
+        );
+
+        let recipeItems = [];
+
+        if (premix) {
+          const calc = calculatePremixQuantities({
+            ingredients,
+            targetQuantity: target,
+            basis,
+            materialsById: matsById
+          });
+
+          recipeItems = calc.map(c => ({
+            material_id: c.material_id,
+            material_name: c.material_name,
+            material_type: c.material_type,
+            gram: Number(c.gram || 0),
+            volumeMl: Number(c.ml || 0)
+          }));
+        } else {
+          const result = calculateRecipe({
+            ingredients: ingredients.map(i => ({ ...i })),
+            targetVolume: target,
+            targetNicotine: recipe.target_nicotine,
+            targetPG: recipe.target_pg,
+            targetVG: recipe.target_vg,
+            nicotineBaseStrength:
+              ingredients.find(i => i.material_type === 'nicotine')?.nicotine_strength || 100,
+            pgMaterial,
+            vgMaterial
+          });
+
+          recipeItems = (result.items || []).map(item => {
+            const mat = matsById[item.material_id];
+            if (isOneToOnePremix(mat)) {
+              return {
+                ...item,
+                gram: Number(item.volumeMl || 0)
+              };
+            }
+            return item;
+          });
+        }
+
+        const checks = await Promise.all(
+          recipeItems.map(async item => {
+            const mat = matsById[item.material_id];
+            const stockRaw = await getMaterialAvailableStock(
+              item.material_id,
+              mat
+            );
+
+            const density = Number(
+              mat?.density ||
+              mat?.default_density ||
+              0
+            );
+
+            const unit = String(mat?.unit || 'gram').toLowerCase();
+            const requiredGram = Number(item.gram || 0);
+            let stockGram = Number(stockRaw || 0);
+
+            if (
+              premix &&
+              unit === 'mililiter' &&
+              density > 0
+            ) {
+              stockGram = Number(stockRaw || 0) * density;
+            }
+
+            return {
+              material_id: item.material_id,
+              material_name: mat?.name || item.material_name || 'Bahan',
+              material_category:
+                mat?.material_category || item.material_type || '',
+              requiredGram,
+              stockGram,
+              shortage: Math.max(0, requiredGram - stockGram),
+              sufficient: stockGram >= requiredGram
+            };
+          })
+        );
+
+        const insufficient = checks.filter(x => !x.sufficient);
+        const essenceChecks = checks.filter(x => {
+          const cat = String(x.material_category || '').toLowerCase();
+          return cat === 'flavor' || cat === 'essence';
+        });
+        const essenceInsufficient = essenceChecks.filter(x => !x.sufficient);
+
+        rows.push({
+          recipe,
+          target,
+          targetUnit: premix
+            ? (basis === 'W_W' ? 'gram' : 'ml')
+            : 'ml',
+          ready: insufficient.length === 0,
+          insufficient,
+          essenceReady: essenceInsufficient.length === 0,
+          essenceInsufficient,
+          totalMaterials: checks.length
+        });
+      }
+
+      rows.sort((a, b) => {
+        if (a.ready !== b.ready) return a.ready ? -1 : 1;
+        return String(a.recipe.name || '').localeCompare(
+          String(b.recipe.name || '')
+        );
+      });
+
+      setProductionReadiness(rows);
+    } catch (e) {
+      console.error('Production readiness failed:', e);
+      setProductionReadiness([]);
+    } finally {
+      setReadinessLoading(false);
+    }
+  }, [recipes, materials, user, getMaterialAvailableStock]);
+
+  useEffect(() => {
+    buildProductionReadiness();
+  }, [buildProductionReadiness]);
+
+  /* ==========================================================
      CALCULATE MATERIALS
   ========================================================== */
   const calculateMaterials = useCallback(
@@ -449,7 +619,6 @@ export default function Production() {
     });
     setCalcItems([]);
     setStockCheck([]);
-    setModalOpen(true);
   };
 
   /* ==========================================================
@@ -748,7 +917,7 @@ export default function Production() {
             `${prdNumber} · ${batchNumber} · ${insufficient.length} bahan belum cukup`
         });
 
-        setModalOpen(false);
+        openAdd();
         await loadData();
         return;
       }
@@ -767,7 +936,7 @@ export default function Production() {
           `${prdNumber} · ${batchNumber}`
       });
 
-      setModalOpen(false);
+      openAdd();
       await loadData();
 
     } catch (e) {
@@ -2143,55 +2312,176 @@ export default function Production() {
     <div className="p-5 max-w-[1400px] mx-auto">
       <PageHeader
         title="Produksi"
-        description="Buat batch produksi dari resep approved"
-        actions={
+        description="Production workstation · kesiapan bahan, pembuatan batch, dan riwayat produksi"
+      />
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+        <div className="border rounded-lg bg-white p-3">
+          <div className="text-[11px] text-muted-foreground uppercase tracking-wide">
+            Resep Approved
+          </div>
+          <div className="text-2xl font-bold mt-1">
+            {productionReadiness.length}
+          </div>
+        </div>
+
+        <div className="border rounded-lg bg-white p-3">
+          <div className="text-[11px] text-muted-foreground uppercase tracking-wide">
+            Bisa Diproduksi
+          </div>
+          <div className="text-2xl font-bold mt-1 text-emerald-600">
+            {productionReadiness.filter(x => x.ready).length}
+          </div>
+        </div>
+
+        <div className="border rounded-lg bg-white p-3">
+          <div className="text-[11px] text-muted-foreground uppercase tracking-wide">
+            Bahan Kurang
+          </div>
+          <div className="text-2xl font-bold mt-1 text-amber-600">
+            {productionReadiness.filter(x => !x.ready).length}
+          </div>
+        </div>
+
+        <div className="border rounded-lg bg-white p-3">
+          <div className="text-[11px] text-muted-foreground uppercase tracking-wide">
+            Essence Siap
+          </div>
+          <div className="text-2xl font-bold mt-1 text-blue-600">
+            {productionReadiness.filter(x => x.essenceReady).length}
+          </div>
+        </div>
+      </div>
+
+      <div className="border rounded-lg bg-white mb-4 overflow-hidden">
+        <div className="px-4 py-3 border-b flex items-center justify-between gap-3">
+          <div>
+            <div className="font-semibold text-[14px]">Kesiapan Produksi</div>
+            <div className="text-[11px] text-muted-foreground">
+              Dihitung dari Recipe approved dan stok bahan aktual. Klik resep untuk masuk ke form produksi.
+            </div>
+          </div>
+
           <Button
-            onClick={openAdd}
+            type="button"
+            variant="outline"
             size="sm"
             className="gap-1.5"
+            disabled={readinessLoading}
+            onClick={buildProductionReadiness}
           >
-            <Plus className="w-4 h-4" />
-            Produksi Baru
+            <RefreshCw className={`w-3.5 h-3.5 ${readinessLoading ? 'animate-spin' : ''}`} />
+            Refresh
           </Button>
-        }
-      />
+        </div>
 
-      <DataTable
-        columns={columns}
-        data={data}
-        loading={loading}
-        emptyMessage="Belum ada produksi"
-        searchKeys={[
-          'production_number',
-          'batch_number',
-          'product_name',
-          'output_material_name',
-          'brand_name'
-        ]}
-        searchPlaceholder="Cari produksi..."
-      />
+        <div className="overflow-x-auto max-h-[340px]">
+          <table className="w-full text-[12px]">
+            <thead className="bg-muted/40 text-muted-foreground sticky top-0">
+              <tr>
+                <th className="px-3 py-2 text-left">Produk / Resep</th>
+                <th className="px-3 py-2 text-left">Merk</th>
+                <th className="px-3 py-2 text-right">Target Standar</th>
+                <th className="px-3 py-2 text-left">Essence</th>
+                <th className="px-3 py-2 text-left">Kesiapan Total</th>
+              </tr>
+            </thead>
 
-      <FormModal
-        open={modalOpen}
-        onClose={() =>
-          setModalOpen(false)
-        }
-        title="Produksi Baru"
-        onSubmit={handleSubmit}
-        submitting={submitting}
-        submitLabel={
-          hasInsufficientStock
-            ? 'Simpan Menunggu Bahan'
-            : 'Buat Produksi'
-        }
-        size="lg"
-      >
-        <div className="grid grid-cols-2 gap-3">
-          <div className="col-span-2">
-            <Label className="text-[12.5px] mb-1">
-              Resep (Approved) *
-            </Label>
+            <tbody>
+              {productionReadiness.map(row => (
+                <tr
+                  key={row.recipe.id}
+                  onClick={() => {
+                    setForm(f => ({
+                      ...f,
+                      recipe_id: row.recipe.id,
+                      target_volume: row.target
+                    }));
+                  }}
+                  className="border-t cursor-pointer hover:bg-muted/30"
+                >
+                  <td className="px-3 py-2">
+                    <div className="font-medium">
+                      {row.recipe.product_name || row.recipe.output_material_name || row.recipe.name || '—'}
+                    </div>
+                    <div className="text-[10.5px] text-muted-foreground font-mono">
+                      {row.recipe.code || '—'} · {row.recipe.name || ''}
+                    </div>
+                  </td>
 
+                  <td className="px-3 py-2">
+                    {row.recipe.brand_name || '—'}
+                  </td>
+
+                  <td className="px-3 py-2 text-right tabular-nums">
+                    {formatNumber(row.target)} {row.targetUnit}
+                  </td>
+
+                  <td className="px-3 py-2">
+                    {row.essenceReady ? (
+                      <span className="text-emerald-600 font-semibold">✓ Cukup</span>
+                    ) : (
+                      <div className="text-amber-700">
+                        <div className="font-semibold flex items-center gap-1">
+                          <AlertTriangle className="w-3 h-3" /> Kurang
+                        </div>
+                        <div className="text-[10px]">
+                          {row.essenceInsufficient
+                            .slice(0, 2)
+                            .map(x => `${x.material_name} -${x.shortage.toFixed(1)}g`)
+                            .join(', ')}
+                        </div>
+                      </div>
+                    )}
+                  </td>
+
+                  <td className="px-3 py-2">
+                    {row.ready ? (
+                      <span className="inline-flex px-2 py-1 rounded bg-emerald-100 text-emerald-700 font-semibold text-[11px]">
+                        SIAP PRODUKSI
+                      </span>
+                    ) : (
+                      <div>
+                        <span className="inline-flex px-2 py-1 rounded bg-amber-100 text-amber-700 font-semibold text-[11px]">
+                          BAHAN KURANG
+                        </span>
+                        <div className="text-[10px] text-muted-foreground mt-1">
+                          {row.insufficient.length} dari {row.totalMaterials} bahan belum cukup
+                        </div>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ))}
+
+              {!readinessLoading && productionReadiness.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-3 py-8 text-center text-muted-foreground">
+                    Belum ada resep approved yang dapat ditampilkan.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="border rounded-lg bg-white p-4 mb-5">
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <div>
+            <div className="font-semibold text-[14px]">Buat Produksi</div>
+            <div className="text-[11px] text-muted-foreground">
+              Pilih resep approved. Sistem langsung menghitung kebutuhan dan mengecek stok.
+            </div>
+          </div>
+          <Button type="button" variant="outline" size="sm" onClick={openAdd}>
+            Reset Form
+          </Button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="md:col-span-2">
+            <Label className="text-[12.5px] mb-1">Resep (Approved) *</Label>
             <SearchableSelect
               value={form.recipe_id}
               onValueChange={v =>
@@ -2211,14 +2501,9 @@ export default function Production() {
           </div>
 
           <div>
-            <Label className="text-[12.5px] mb-1">
-              {targetLabel}
-            </Label>
-
+            <Label className="text-[12.5px] mb-1">{targetLabel}</Label>
             <NumberInput
-              value={
-                form.target_volume
-              }
+              value={form.target_volume}
               onChange={v =>
                 setForm({
                   ...form,
@@ -2233,20 +2518,14 @@ export default function Production() {
           </div>
 
           <div>
-            <Label className="text-[12.5px] mb-1">
-              Tanggal Produksi
-            </Label>
-
+            <Label className="text-[12.5px] mb-1">Tanggal Produksi</Label>
             <Input
               type="date"
-              value={
-                form.production_date
-              }
+              value={form.production_date}
               onChange={e =>
                 setForm({
                   ...form,
-                  production_date:
-                    e.target.value
+                  production_date: e.target.value
                 })
               }
               className="h-9 text-[13px]"
@@ -2254,19 +2533,13 @@ export default function Production() {
           </div>
 
           <div>
-            <Label className="text-[12.5px] mb-1">
-              Operator *
-            </Label>
-
+            <Label className="text-[12.5px] mb-1">Operator *</Label>
             <Input
-              value={
-                form.operator
-              }
+              value={form.operator}
               onChange={e =>
                 setForm({
                   ...form,
-                  operator:
-                    e.target.value
+                  operator: e.target.value
                 })
               }
               className="h-9 text-[13px]"
@@ -2274,19 +2547,13 @@ export default function Production() {
           </div>
 
           <div>
-            <Label className="text-[12.5px] mb-1">
-              Catatan
-            </Label>
-
+            <Label className="text-[12.5px] mb-1">Catatan</Label>
             <Input
-              value={
-                form.notes
-              }
+              value={form.notes}
               onChange={e =>
                 setForm({
                   ...form,
-                  notes:
-                    e.target.value
+                  notes: e.target.value
                 })
               }
               className="h-9 text-[13px]"
@@ -2294,196 +2561,105 @@ export default function Production() {
           </div>
         </div>
 
-        {selectedRecipe &&
-          stockCheck.length > 0 && (
-          <div className="border-t pt-3 mt-2">
-
-            <Label className="text-[12.5px] font-semibold mb-2 block">
-              Ringkasan Produksi
-            </Label>
-
-            <div className="grid grid-cols-3 gap-2 text-[11.5px]">
-
+        {selectedRecipe && stockCheck.length > 0 && (
+          <div className="border-t pt-3 mt-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[11.5px] mb-3">
               <div className="bg-muted/40 rounded px-2 py-1.5">
-                Recipe Type:
-                <b>
-                  {' '}
-                  {isPremix
-                    ? 'PREMIX'
-                    : 'FINISHED_PRODUCT'}
-                </b>
+                Target: <b>{formatNumber(form.target_volume)} {targetUnit}</b>
               </div>
-
-              <div className="bg-muted/40 rounded px-2 py-1.5">
-                Calculation Basis:
-                <b>
-                  {' '}
-                  {isPremix
-                    ? basis
-                    : '—'}
-                </b>
-              </div>
-
-              <div className="bg-muted/40 rounded px-2 py-1.5">
-                Target Produksi:
-                <b>
-                  {' '}
-                  {formatNumber(
-                    form.target_volume
-                  )}{' '}
-                  {targetUnit}
-                </b>
-              </div>
-
-              <div className="bg-muted/40 rounded px-2 py-1.5">
-                Satuan:
-                <b>
-                  {' '}
-                  {isPremix
-                    ? (
-                        basis === 'W_W'
-                          ? 'Gram'
-                          : 'ml'
-                      )
-                    : 'ml'}
-                </b>
-              </div>
-
               {!formulaHidden && (
                 <div className="bg-muted/40 rounded px-2 py-1.5">
-                  Total Formula:
-                  <b>
-                    {' '}
-                    {totalFormulaPct.toFixed(2)}%
-                  </b>
+                  Formula: <b>{totalFormulaPct.toFixed(2)}%</b>
                 </div>
               )}
-
               <div className="bg-muted/40 rounded px-2 py-1.5">
-                Total Kebutuhan:
-                <b>
-                  {' '}
-                  {formatNumber(
-                    totalRequirement,
-                    2
-                  )}{' '}
-                  gram
-                </b>
+                Kebutuhan: <b>{formatNumber(totalRequirement, 2)} gram</b>
+              </div>
+              <div className={hasInsufficientStock
+                ? 'bg-amber-50 text-amber-700 rounded px-2 py-1.5'
+                : 'bg-emerald-50 text-emerald-700 rounded px-2 py-1.5'}
+              >
+                Status: <b>{hasInsufficientStock ? 'MENUNGGU BAHAN' : 'SIAP PRODUKSI'}</b>
               </div>
             </div>
-          </div>
-        )}
-
-        {stockCheck.length > 0 && (
-          <div className="border-t pt-3 mt-2">
-
-            <Label className="text-[12.5px] font-semibold mb-2 block">
-              Pemeriksaan Stok Bahan
-            </Label>
-
-            {hasInsufficientStock && (
-              <div className="mb-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-[11.5px] text-amber-700">
-                ⚠ Ada bahan yang belum cukup. Order tetap dapat disimpan sebagai
-                <b> Menunggu Bahan</b>. Pada tahap ini stok belum dikurangi.
-              </div>
-            )}
 
             <div className="overflow-x-auto">
               <table className="w-full text-[11.5px]">
                 <thead>
                   <tr className="bg-muted/40 text-muted-foreground">
-                    <th className="px-2 py-1 text-left">
-                      Bahan
-                    </th>
-
-                    {!formulaHidden && (
-                      <th className="px-2 py-1 text-right">
-                        Persentase
-                      </th>
-                    )}
-
-                    <th className="px-2 py-1 text-right">
-                      Kebutuhan (ml)
-                    </th>
-
-                    <th className="px-2 py-1 text-right">
-                      Kebutuhan (gram)
-                    </th>
-
-                    <th className="px-2 py-1 text-right">
-                      Stok Tersedia
-                      {isPremix
-                        ? ' (gram)'
-                        : ''}
-                    </th>
-
-                    <th className="px-2 py-1 text-center">
-                      Status
-                    </th>
+                    <th className="px-2 py-1 text-left">Bahan</th>
+                    {!formulaHidden && <th className="px-2 py-1 text-right">%</th>}
+                    <th className="px-2 py-1 text-right">Butuh (g)</th>
+                    <th className="px-2 py-1 text-right">Stok (g)</th>
+                    <th className="px-2 py-1 text-center">Status</th>
                   </tr>
                 </thead>
-
                 <tbody>
-                  {stockCheck.map(
-                    (item, i) => (
-                      <tr
-                        key={i}
-                        className="border-b border-border/30"
-                      >
-                        <td className="px-2 py-1">
-                          {item.material_name}
+                  {stockCheck.map((item, i) => (
+                    <tr key={i} className="border-b border-border/30">
+                      <td className="px-2 py-1">{item.material_name}</td>
+                      {!formulaHidden && (
+                        <td className="px-2 py-1 text-right tabular-nums">
+                          {Number(item.percentage || 0).toFixed(2)}%
                         </td>
-
-                        {!formulaHidden && (
-                          <td className="px-2 py-1 text-right tabular-nums">
-                            {Number(
-                              item.percentage || 0
-                            ).toFixed(2)}%
-                          </td>
+                      )}
+                      <td className="px-2 py-1 text-right tabular-nums">
+                        {Number(item.gram || 0).toFixed(2)}
+                      </td>
+                      <td className="px-2 py-1 text-right tabular-nums">
+                        {Number(item.stockAvailable || 0).toFixed(2)}
+                      </td>
+                      <td className="px-2 py-1 text-center">
+                        {item.stockSufficient ? (
+                          <span className="text-emerald-600 font-semibold">✓ Cukup</span>
+                        ) : (
+                          <span className="text-red-600 font-semibold">Kurang</span>
                         )}
-
-                        <td className="px-2 py-1 text-right tabular-nums">
-                          {Number(
-                            item.volumeMl || 0
-                          ).toFixed(2)}
-                        </td>
-
-                        <td className="px-2 py-1 text-right tabular-nums">
-                          {Number(
-                            item.gram || 0
-                          ).toFixed(2)}
-                        </td>
-
-                        <td className="px-2 py-1 text-right tabular-nums">
-                          {Number(
-                            item.stockAvailable || 0
-                          ).toFixed(2)}
-                        </td>
-
-                        <td className="px-2 py-1 text-center">
-                          {item.stockSufficient
-                            ? (
-                              <span className="text-emerald-600 font-semibold">
-                                ✓ Cukup
-                              </span>
-                            )
-                            : (
-                              <span className="text-red-600 font-semibold flex items-center justify-center gap-0.5">
-                                <AlertTriangle className="w-3 h-3" />
-                                Kurang
-                              </span>
-                            )
-                          }
-                        </td>
-                      </tr>
-                    )
-                  )}
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
           </div>
         )}
-      </FormModal>
+
+        <div className="flex justify-end mt-4">
+          <Button
+            type="button"
+            onClick={handleSubmit}
+            disabled={submitting}
+          >
+            {submitting
+              ? 'Menyimpan...'
+              : hasInsufficientStock
+                ? 'Simpan Menunggu Bahan'
+                : 'Buat Produksi'}
+          </Button>
+        </div>
+      </div>
+
+      <div className="mb-2">
+        <div className="font-semibold text-[14px]">Riwayat Produksi</div>
+        <div className="text-[11px] text-muted-foreground">
+          Daftar Production Order, batch, status proses, PDF, VOID, dan aksi existing.
+        </div>
+      </div>
+
+      <DataTable
+        columns={columns}
+        data={data}
+        loading={loading}
+        emptyMessage="Belum ada produksi"
+        searchKeys={[
+          'production_number',
+          'batch_number',
+          'product_name',
+          'output_material_name',
+          'brand_name'
+        ]}
+        searchPlaceholder="Cari produksi..."
+      />
 
       <FormModal
         open={detailOpen}
