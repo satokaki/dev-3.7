@@ -3,7 +3,6 @@ import { base44 } from '@/api/base44Client';
 import { useToast } from '@/components/ui/use-toast';
 import PageHeader from '@/components/PageHeader';
 import DataTable from '@/components/DataTable';
-import FormModal from '@/components/FormModal';
 import SearchableSelect from '@/components/SearchableSelect';
 import StatusBadge from '@/components/StatusBadge';
 import { Button } from '@/components/ui/button';
@@ -15,7 +14,6 @@ import { Switch } from '@/components/ui/switch';
 import NumberInput from '@/components/NumberInput';
 import PdfButton from '@/components/PdfButton';
 import { exportDocumentToPDF } from '@/lib/pdfExport';
-import { Plus } from 'lucide-react';
 import { generateOrderNumber } from '@/lib/sequence';
 import { recordStockMovement, getAllStockBalances, createAuditLog } from '@/lib/stockUtils';
 import { getInventoryDisplayName } from '@/lib/inventoryDisplay';
@@ -30,8 +28,8 @@ export default function Excise() {
   const [boxMaterials, setBoxMaterials] = useState([]);
   const [exciseStocks, setExciseStocks] = useState({});
   const [loading, setLoading] = useState(true);
-  const [modalOpen, setModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [bottlingSizeLookup, setBottlingSizeLookup] = useState({});
 
   const [form, setForm] = useState({
     product_id: '',
@@ -58,7 +56,17 @@ export default function Excise() {
     setLoading(true);
 
     try {
-      const [items, balances, prods, brs, mats, matBal, boxMats] = await Promise.all([
+      const [
+        items,
+        balances,
+        prods,
+        brs,
+        mats,
+        matBal,
+        boxMats,
+        bottlingOrders,
+        bottlingOutputs
+      ] = await Promise.all([
         base44.entities.ExciseOrder.list('-created_date', 100),
         getAllStockBalances('product'),
         base44.entities.Product.filter({ is_active: true }),
@@ -74,6 +82,8 @@ export default function Excise() {
           '-created_date',
           500
         ),
+        base44.entities.BottlingOrder.list('-created_date', 500),
+        base44.entities.BottlingOutput.list('-created_date', 500),
       ]);
 
       setData(items);
@@ -97,6 +107,44 @@ export default function Excise() {
       });
 
       setExciseStocks(sm);
+
+      /*
+       * v3.7 UI READ MODEL — BOTTLE SIZE FROM BOTTLING
+       * Join BottlingOutput -> BottlingOrder.batch_number.
+       * Exact batch+product match is preferred; batch-only fallback
+       * supports Labeling that changes product identity (e.g. maklon).
+       */
+      const orderById = Object.fromEntries(
+        (bottlingOrders || []).map(order => [order.id, order])
+      );
+
+      const sizeLookup = {};
+
+      for (const output of bottlingOutputs || []) {
+        const order = orderById[output?.bottling_id];
+        const batchNumber = String(order?.batch_number || '').trim();
+        const bottleSize = Number(
+          output?.bottle_size ??
+          output?.volume_per_bottle ??
+          0
+        );
+
+        if (!batchNumber || bottleSize <= 0) continue;
+
+        if (output?.product_id) {
+          const exactKey = `${batchNumber}|${output.product_id}`;
+          if (sizeLookup[exactKey] == null) {
+            sizeLookup[exactKey] = bottleSize;
+          }
+        }
+
+        const batchKey = `${batchNumber}|*`;
+        if (sizeLookup[batchKey] == null) {
+          sizeLookup[batchKey] = bottleSize;
+        }
+      }
+
+      setBottlingSizeLookup(sizeLookup);
     } catch {
       toast({
         variant: 'destructive',
@@ -125,7 +173,7 @@ export default function Excise() {
   const exciseRequired =
     selectedProduct?.excise_required !== false;
 
-  const openAdd = () => {
+  const resetForm = () => {
     setForm({
       product_id: '',
       stock_id: '',
@@ -146,26 +194,95 @@ export default function Excise() {
       box_material_name: '',
       box_quantity_per_unit: '1',
     });
-
-    setModalOpen(true);
   };
 
   const onStockChange = (v) => {
     const stock = belumCukaiStock.find(s => s.id === v);
     const prod = products.find(p => p.id === stock?.item_id);
+    const batchNumber = String(stock?.batch_number || '').trim();
+
+    const bottlingBottleSize =
+      Number(
+        bottlingSizeLookup[
+          `${batchNumber}|${stock?.item_id || ''}`
+        ] ??
+        bottlingSizeLookup[
+          `${batchNumber}|*`
+        ] ??
+        0
+      ) || '';
 
     setForm(f => ({
       ...f,
       stock_id: v,
       product_id: stock?.item_id || '',
       brand_id: prod?.brand_id || '',
-      bottle_size: prod?.bottle_size ?? '',
+      bottle_size: bottlingBottleSize,
+      quantity: String(
+        stock?.available_quantity ??
+        stock?.quantity ??
+        ''
+      ),
       excise_material_id: '',
       excise_material_name: '',
       excise_quantity_per_unit: '1',
       excise_label_type: '',
     }));
   };
+
+  /*
+   * v3.7 UI ONLY — PITA CUKAI RECOMMENDATION BY BOTTLING SIZE
+   * Material EXCISE has no dedicated bottle_size field, so size is
+   * inferred from specification/name/code text such as "30ml".
+   */
+  const inferExciseBottleSize = (material) => {
+    const text = [
+      material?.specification,
+      material?.name,
+      material?.code,
+    ]
+      .filter(Boolean)
+      .join(' ');
+
+    const match =
+      text.match(/(\d+(?:[.,]\d+)?)\s*ml\b/i);
+
+    return match
+      ? Number(String(match[1]).replace(',', '.'))
+      : 0;
+  };
+
+  const selectedBottleSize =
+    Number(form.bottle_size) || 0;
+
+  const recommendedExciseMaterials =
+    [...exciseMaterials]
+      .sort((a, b) => {
+        const aMatch =
+          selectedBottleSize > 0 &&
+          inferExciseBottleSize(a) === selectedBottleSize;
+
+        const bMatch =
+          selectedBottleSize > 0 &&
+          inferExciseBottleSize(b) === selectedBottleSize;
+
+        if (aMatch !== bMatch) {
+          return aMatch ? -1 : 1;
+        }
+
+        return String(a?.name || '').localeCompare(
+          String(b?.name || ''),
+          'id'
+        );
+      });
+
+  const recommendedExciseCount =
+    recommendedExciseMaterials.filter(
+      material =>
+        selectedBottleSize > 0 &&
+        inferExciseBottleSize(material) === selectedBottleSize &&
+        Number(exciseStocks[material.id] || 0) > 0
+    ).length;
 
   const onCukaiChange = (materialId) => {
     const m = exciseMaterials.find(x => x.id === materialId);
@@ -838,7 +955,7 @@ export default function Excise() {
           `${excNumber} · ${product.name}`,
       });
 
-      setModalOpen(false);
+      resetForm();
       await loadData();
 
     } catch (e) {
@@ -1258,44 +1375,33 @@ export default function Excise() {
     <div className="p-5 max-w-[1400px] mx-auto">
       <PageHeader
         title="Proses Cukai"
-        description="Produk hasil Labeling (UNEXCISED) → READY_FOR_SALE. Identitas produk tidak berubah lagi di tahap Cukai."
-        actions={
+        description="Produk hasil Labeling (UNEXCISED) → READY_FOR_SALE. Ukuran botol dibaca dari proses Bottling sebelumnya."
+      />
+
+      {/* FORM CUKAI DEDICATED — TIDAK POPUP */}
+      <div className="rounded-lg border bg-white mb-5 overflow-hidden">
+        <div className="px-4 py-3 border-b flex items-center justify-between gap-3">
+          <div>
+            <div className="font-semibold text-[14px]">
+              Form Proses Cukai
+            </div>
+            <div className="text-[11px] text-muted-foreground">
+              Pilih produk UNEXCISED → ukuran botol dari Bottling → pita cukai rekomendasi.
+            </div>
+          </div>
+
           <Button
-            onClick={openAdd}
+            type="button"
+            variant="outline"
             size="sm"
-            className="gap-1.5"
+            onClick={resetForm}
+            disabled={submitting}
           >
-            <Plus className="w-4 h-4" />
-            Proses Cukai Baru
+            Reset Form
           </Button>
-        }
-      />
+        </div>
 
-      <DataTable
-        columns={columns}
-        data={data}
-        loading={loading}
-        emptyMessage="Belum ada proses cukai"
-        searchKeys={[
-          'excise_number',
-          'product_name',
-          'batch_number'
-        ]}
-        searchPlaceholder="Cari proses cukai..."
-      />
-
-
-      <FormModal
-        open={modalOpen}
-        onClose={() =>
-          setModalOpen(false)
-        }
-        title="Proses Cukai Baru"
-        onSubmit={handleSubmit}
-        submitting={submitting}
-        submitLabel="Proses Cukai"
-        size="lg"
-      >
+        <div className="p-4 space-y-4">
         <div>
           <Label className="text-[12.5px] mb-1">
             Produk (Belum Cukai) *
@@ -1408,19 +1514,22 @@ export default function Excise() {
               Ukuran Botol (ml)
             </Label>
 
-            <NumberInput
-              value={form.bottle_size}
-              onChange={v =>
-                setForm(f => ({
-                  ...f,
-                  bottle_size: v
-                }))
+            <Input
+              value={
+                form.bottle_size
+                  ? `${form.bottle_size} ml`
+                  : ''
               }
-              allowDecimal
-              maxDecimals={1}
-              min={0}
-              className="h-9 text-[13px]"
+              disabled
+              placeholder="Terbaca otomatis dari Bottling"
+              className="h-9 text-[13px] bg-muted/40"
             />
+
+            {form.stock_id && !form.bottle_size && (
+              <p className="text-[11px] text-amber-600 mt-1">
+                Data ukuran Bottling untuk batch ini belum ditemukan.
+              </p>
+            )}
           </div>
 
           <div>
@@ -1483,9 +1592,16 @@ export default function Excise() {
             </SelectTrigger>
 
             <SelectContent>
-              {exciseMaterials.map(m => {
+              {recommendedExciseMaterials.map(m => {
                 const stk =
                   exciseStocks[m.id] || 0;
+
+                const materialSize =
+                  inferExciseBottleSize(m);
+
+                const recommended =
+                  selectedBottleSize > 0 &&
+                  materialSize === selectedBottleSize;
 
                 return (
                   <SelectItem
@@ -1493,12 +1609,25 @@ export default function Excise() {
                     value={m.id}
                     disabled={stk <= 0}
                   >
-                    {m.name} · Stok {stk} {m.unit || 'pcs'}
+                    {recommended ? '★ ' : ''}
+                    {m.name}
+                    {materialSize > 0 ? ` · ${materialSize}ml` : ''}
+                    {' · '}
+                    Stok {stk} {m.unit || 'pcs'}
                   </SelectItem>
                 );
               })}
             </SelectContent>
           </Select>
+
+          {selectedBottleSize > 0 && (
+            <p className="text-[11px] text-violet-700 mt-1">
+              ★ Rekomendasi pita untuk ukuran {selectedBottleSize} ml
+              {recommendedExciseCount > 0
+                ? ` · ${recommendedExciseCount} pilihan stok tersedia`
+                : ' · belum ada material ukuran cocok di master/stok'}
+            </p>
+          )}
 
           {!exciseRequired && selectedProduct && (
             <p className="text-[11px] text-blue-600 mt-1">
@@ -1757,7 +1886,66 @@ export default function Excise() {
             className="text-[13px]"
           />
         </div>
-      </FormModal>
+        </div>
+
+        <div className="px-4 py-3 border-t bg-muted/10 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div className="text-[11px] text-muted-foreground">
+            {form.stock_id
+              ? (
+                  form.bottle_size
+                    ? `Ukuran Bottling: ${form.bottle_size} ml`
+                    : 'Ukuran Bottling belum ditemukan untuk batch ini.'
+                )
+              : 'Pilih produk belum cukai untuk mulai.'
+            }
+          </div>
+
+          <div className="flex items-center justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={resetForm}
+              disabled={submitting}
+            >
+              Bersihkan
+            </Button>
+
+            <Button
+              type="button"
+              onClick={handleSubmit}
+              disabled={submitting}
+            >
+              {submitting
+                ? 'Memproses...'
+                : 'Proses Cukai'
+              }
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {/* RIWAYAT CUKAI */}
+      <div className="mb-2">
+        <div className="font-semibold text-[14px]">
+          Riwayat Proses Cukai
+        </div>
+        <div className="text-[11px] text-muted-foreground">
+          Dokumen proses cukai yang sudah diproses.
+        </div>
+      </div>
+
+      <DataTable
+        columns={columns}
+        data={data}
+        loading={loading}
+        emptyMessage="Belum ada proses cukai"
+        searchKeys={[
+          'excise_number',
+          'product_name',
+          'batch_number'
+        ]}
+        searchPlaceholder="Cari proses cukai..."
+      />
     </div>
   );
 }
