@@ -12,7 +12,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import NumberInput from '@/components/NumberInput';
 import SearchableSelect from '@/components/SearchableSelect';
-import { Plus, Eye } from 'lucide-react';
+import { Eye, ChevronDown, ChevronUp, Package } from 'lucide-react';
 import { generateOrderNumber } from '@/lib/sequence';
 import { recordStockMovement, getAllStockBalances, createAuditLog } from '@/lib/stockUtils';
 import { getInventoryDisplayName } from '@/lib/inventoryDisplay';
@@ -44,6 +44,7 @@ export default function Bottling() {
   const [bottleStocks, setBottleStocks] = useState({});
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
+  const [readinessOpen, setReadinessOpen] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM());
   const [detailItem, setDetailItem] = useState(null);
@@ -112,7 +113,31 @@ export default function Bottling() {
 
   const openAdd = () => {
     setForm(EMPTY_FORM());
-    setModalOpen(true);
+    setModalOpen(false);
+  };
+
+  const selectBulkStock = (stockId) => {
+    const stock = bulkStock.find(b => b.id === stockId);
+    const source = products.find(p => p.id === stock?.item_id);
+
+    setForm(current => ({
+      ...current,
+      stock_id: stockId,
+      source_product_id: stock?.item_id || '',
+      source_product_name: source?.name || stock?.item_name || '',
+      source_brand_id: source?.brand_id || '',
+      source_brand_name: source?.brand_name || '',
+      output_product_id: '',
+      batch_id: stock?.batch_id || '',
+      batch_number: stock?.batch_number || '',
+      available_bulk:
+        stock?.available_quantity ??
+        stock?.quantity ??
+        '',
+      bottle_item_id: '',
+      bottle_count: '',
+      volume_per_bottle: '',
+    }));
   };
 
   const totalVolume =
@@ -120,6 +145,75 @@ export default function Bottling() {
     (Number(form.volume_per_bottle) || 0);
 
   const outputProducts = products.filter(p => p.product_type !== 'botol_kosong');
+
+  const selectedOutputProduct =
+    products.find(p => p.id === form.output_product_id);
+
+  const inferBottleSize = (item) => {
+    const direct = Number(
+      item?.bottle_size ??
+      item?.volume ??
+      item?.size_ml ??
+      item?.capacity_ml
+    );
+
+    if (direct > 0) return direct;
+
+    const text = `${item?.name || ''} ${item?.code || ''}`;
+    const match = text.match(/(\d+(?:[.,]\d+)?)\s*ml\b/i);
+
+    return match
+      ? Number(String(match[1]).replace(',', '.'))
+      : 0;
+  };
+
+  const availableBottleSizes = [
+    ...new Set(
+      bottleMaterials
+        .filter(m => Number(bottleStocks[m.id] || 0) > 0)
+        .map(inferBottleSize)
+        .filter(size => size > 0)
+    )
+  ].sort((a, b) => a - b);
+
+  const selectedBottleSize =
+    Number(form.volume_per_bottle) || 0;
+
+  const filteredBottleMaterials =
+    bottleMaterials
+      .filter(m => {
+        const stock = Number(bottleStocks[m.id] || 0);
+        if (stock <= 0) return false;
+
+        if (!selectedBottleSize) return true;
+
+        return inferBottleSize(m) === selectedBottleSize;
+      })
+      .sort((a, b) =>
+        String(a.name || '').localeCompare(
+          String(b.name || '')
+        )
+      );
+
+  const totalBulkAvailable =
+    bulkStock.reduce(
+      (sum, row) =>
+        sum +
+        Number(
+          row.available_quantity ??
+          row.quantity ??
+          0
+        ),
+      0
+    );
+
+  const totalBottleAvailable =
+    Object.values(bottleStocks).reduce(
+      (sum, qty) =>
+        sum +
+        Number(qty || 0),
+      0
+    );
 
   const handleSubmit = async () => {
     if (
@@ -326,7 +420,7 @@ export default function Bottling() {
         description: `${botNumber} · Output: ${outputProduct.name}`,
       });
 
-      setModalOpen(false);
+      openAdd();
       loadData();
     } catch (e) {
       toast({
@@ -385,27 +479,645 @@ export default function Bottling() {
     <div className="p-5 max-w-[1400px] mx-auto">
       <PageHeader
         title="Bottling"
-        description="Bottling bulk → SKU botol (siap labeling). Produk Jadi dipilih saat Bottling."
-        actions={
-          <Button onClick={openAdd} size="sm" className="gap-1.5">
-            <Plus className="w-4 h-4" /> Bottling Baru
-          </Button>
-        }
+        description="Workstation bottling · pilih bulk siap bottling, SKU output, ukuran dan botol."
       />
+
+      {/* MINI DASHBOARD */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+        <div className="rounded-lg border bg-white p-3">
+          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+            Siap Bottling
+          </div>
+          <div className="mt-1 text-2xl font-bold text-violet-600">
+            {bulkStock.length}
+          </div>
+          <div className="text-[10.5px] text-muted-foreground">
+            batch bulk
+          </div>
+        </div>
+
+        <div className="rounded-lg border bg-white p-3">
+          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+            Bulk Tersedia
+          </div>
+          <div className="mt-1 text-xl font-bold text-emerald-600 tabular-nums">
+            {totalBulkAvailable.toLocaleString('id-ID')}
+          </div>
+          <div className="text-[10.5px] text-muted-foreground">
+            ml
+          </div>
+        </div>
+
+        <div className="rounded-lg border bg-white p-3">
+          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+            Botol Tersedia
+          </div>
+          <div className="mt-1 text-xl font-bold text-blue-600 tabular-nums">
+            {totalBottleAvailable.toLocaleString('id-ID')}
+          </div>
+          <div className="text-[10.5px] text-muted-foreground">
+            pcs semua ukuran
+          </div>
+        </div>
+
+        <div className="rounded-lg border bg-white p-3">
+          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+            Ukuran Botol
+          </div>
+          <div className="mt-1 text-2xl font-bold">
+            {availableBottleSizes.length}
+          </div>
+          <div className="text-[10.5px] text-muted-foreground">
+            ukuran tersedia
+          </div>
+        </div>
+      </div>
+
+      {/* SIAP BOTTLING — COLLAPSIBLE */}
+      <div className="rounded-lg border bg-white mb-4 overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setReadinessOpen(v => !v)}
+          className="w-full px-4 py-3 flex items-center justify-between gap-3 text-left hover:bg-muted/20"
+        >
+          <div>
+            <div className="font-semibold text-[14px]">
+              Siap Bottling
+            </div>
+            <div className="text-[11px] text-muted-foreground">
+              Klik batch untuk langsung mengisi form.
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-semibold text-violet-700">
+              {bulkStock.length} batch
+            </span>
+            {readinessOpen
+              ? <ChevronUp className="w-4 h-4" />
+              : <ChevronDown className="w-4 h-4" />
+            }
+          </div>
+        </button>
+
+        {readinessOpen && (
+          <div className="border-t overflow-x-auto max-h-[300px]">
+            <table className="w-full text-[12px]">
+              <thead className="bg-muted/40 text-muted-foreground sticky top-0 z-10">
+                <tr>
+                  <th className="px-3 py-2 text-left">Batch</th>
+                  <th className="px-3 py-2 text-left">Produk</th>
+                  <th className="px-3 py-2 text-left">Merk</th>
+                  <th className="px-3 py-2 text-right">Bulk</th>
+                  <th className="px-3 py-2 text-center">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {bulkStock.map(stock => {
+                  const source =
+                    products.find(
+                      p => p.id === stock.item_id
+                    );
+
+                  const available =
+                    Number(
+                      stock.available_quantity ??
+                      stock.quantity ??
+                      0
+                    );
+
+                  return (
+                    <tr
+                      key={stock.id}
+                      onClick={() =>
+                        selectBulkStock(stock.id)
+                      }
+                      className={`border-t cursor-pointer hover:bg-violet-50/50 ${
+                        form.stock_id === stock.id
+                          ? 'bg-violet-50'
+                          : ''
+                      }`}
+                    >
+                      <td className="px-3 py-2 font-mono">
+                        {stock.batch_number || '—'}
+                      </td>
+                      <td className="px-3 py-2 font-medium">
+                        {getInventoryDisplayName(
+                          source?.name ||
+                          stock.item_name,
+                          'BULK'
+                        )}
+                      </td>
+                      <td className="px-3 py-2">
+                        {source?.brand_name || '—'}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {available.toLocaleString('id-ID')} ml
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        <span className="inline-flex rounded bg-emerald-100 px-2 py-1 text-[10.5px] font-semibold text-emerald-700">
+                          SIAP
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+
+                {!loading &&
+                bulkStock.length === 0 && (
+                  <tr>
+                    <td
+                      colSpan={5}
+                      className="px-3 py-8 text-center text-muted-foreground"
+                    >
+                      Tidak ada bulk yang siap bottling.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* FORM BOTTLING DEDICATED */}
+      <div className="rounded-lg border bg-white mb-5 overflow-hidden">
+        <div className="px-4 py-3 border-b flex items-center justify-between gap-3">
+          <div>
+            <div className="font-semibold text-[14px]">
+              Form Bottling
+            </div>
+            <div className="text-[11px] text-muted-foreground">
+              Bulk → SKU output → ukuran botol → material botol.
+            </div>
+          </div>
+
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={openAdd}
+          >
+            Reset Form
+          </Button>
+        </div>
+
+        <div className="p-4 grid grid-cols-1 lg:grid-cols-2 gap-5">
+          <div className="space-y-4">
+            <div className="text-[12.5px] font-semibold">
+              1. Informasi Sumber Bulk
+            </div>
+
+            <div>
+              <Label className="text-[12.5px] mb-1">
+                Batch Bulk (Siap Bottling) *
+              </Label>
+              <Select
+                value={form.stock_id}
+                onValueChange={
+                  selectBulkStock
+                }
+              >
+                <SelectTrigger className="h-9 text-[13px]">
+                  <SelectValue placeholder="Pilih batch bulk" />
+                </SelectTrigger>
+
+                <SelectContent>
+                  {bulkStock.map(stock => {
+                    const source =
+                      products.find(
+                        p =>
+                          p.id ===
+                          stock.item_id
+                      );
+
+                    return (
+                      <SelectItem
+                        key={stock.id}
+                        value={stock.id}
+                      >
+                        {getInventoryDisplayName(
+                          source?.name ||
+                          stock.item_name,
+                          'BULK'
+                        )}
+                        {' '}(
+                        {
+                          stock.available_quantity ??
+                          stock.quantity ??
+                          0
+                        } ml)
+                        {stock.batch_number
+                          ? ` · ${stock.batch_number}`
+                          : ''
+                        }
+                      </SelectItem>
+                    );
+                  })}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-[12.5px] mb-1">
+                  Produk Sumber
+                </Label>
+                <Input
+                  value={form.source_product_name}
+                  disabled
+                  className="h-9 text-[13px] bg-muted/40"
+                />
+              </div>
+
+              <div>
+                <Label className="text-[12.5px] mb-1">
+                  Merk Sumber
+                </Label>
+                <Input
+                  value={form.source_brand_name}
+                  disabled
+                  className="h-9 text-[13px] bg-muted/40"
+                />
+              </div>
+
+              <div>
+                <Label className="text-[12.5px] mb-1">
+                  Batch
+                </Label>
+                <Input
+                  value={form.batch_number}
+                  disabled
+                  className="h-9 text-[13px] bg-muted/40"
+                />
+              </div>
+
+              <div>
+                <Label className="text-[12.5px] mb-1">
+                  Bulk Tersedia (ml)
+                </Label>
+                <Input
+                  value={form.available_bulk}
+                  disabled
+                  className="h-9 text-[13px] bg-muted/40"
+                />
+              </div>
+            </div>
+
+            <div className="border-t pt-4">
+              <div className="text-[12.5px] font-semibold mb-3">
+                2. Produk Jadi / Output
+              </div>
+
+              <Label className="text-[12.5px] mb-1">
+                Produk Jadi / SKU Output *
+              </Label>
+
+              <SearchableSelect
+                value={form.output_product_id}
+                onValueChange={v => {
+                  const output =
+                    products.find(
+                      p => p.id === v
+                    );
+
+                  const size =
+                    Number(
+                      output?.bottle_size
+                    ) > 0
+                      ? Number(
+                          output.bottle_size
+                        )
+                      : form.volume_per_bottle;
+
+                  setForm(current => ({
+                    ...current,
+                    output_product_id: v,
+                    volume_per_bottle: size,
+                    bottle_item_id: ''
+                  }));
+                }}
+                options={outputProducts.map(p => ({
+                  value: p.id,
+                  label:
+                    `${p.name}` +
+                    `${p.brand_name ? ` · ${p.brand_name}` : ''}` +
+                    `${p.bottle_size ? ` (${p.bottle_size}ml)` : ''}`,
+                  keywords:
+                    `${p.code || ''} ${p.name || ''} ${p.brand_name || ''} ${p.bottle_size || ''}`,
+                }))}
+                placeholder="Cari & pilih produk jadi"
+              />
+
+              {selectedOutputProduct && (
+                <div className="mt-3 rounded-md bg-muted/30 p-3">
+                  <div className="text-[11px] text-muted-foreground mb-2">
+                    Ukuran Output
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    {availableBottleSizes.map(size => (
+                      <button
+                        key={size}
+                        type="button"
+                        onClick={() =>
+                          setForm(current => ({
+                            ...current,
+                            volume_per_bottle: size,
+                            bottle_item_id: ''
+                          }))
+                        }
+                        className={`rounded-md border px-3 py-1.5 text-[12px] font-semibold transition-colors ${
+                          selectedBottleSize === size
+                            ? 'border-violet-500 bg-violet-600 text-white'
+                            : 'bg-white hover:bg-muted'
+                        }`}
+                      >
+                        {size} ml
+                      </button>
+                    ))}
+
+                    {availableBottleSizes.length === 0 && (
+                      <span className="text-[11px] text-amber-600">
+                        Ukuran botol belum dapat dibaca dari nama/master botol.
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className="text-[12.5px] font-semibold">
+              3. Pilih Botol
+              {selectedBottleSize > 0
+                ? ` · ${selectedBottleSize} ml`
+                : ''
+              }
+            </div>
+
+            {!selectedBottleSize ? (
+              <div className="rounded-lg border border-dashed p-5 text-center">
+                <Package className="w-7 h-7 mx-auto mb-2 text-muted-foreground" />
+                <div className="text-[12px] font-medium">
+                  Pilih produk / ukuran output terlebih dahulu
+                </div>
+                <div className="text-[11px] text-muted-foreground mt-1">
+                  Material botol akan difilter sesuai ukuran.
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-lg border overflow-hidden">
+                <div className="px-3 py-2 bg-blue-50 text-blue-700 text-[11px]">
+                  Menampilkan botol ukuran <b>{selectedBottleSize} ml</b> yang stoknya tersedia.
+                </div>
+
+                <div className="divide-y max-h-[250px] overflow-y-auto">
+                  {filteredBottleMaterials.map(m => {
+                    const stock =
+                      Number(
+                        bottleStocks[m.id] ||
+                        0
+                      );
+
+                    const selected =
+                      form.bottle_item_id ===
+                      m.id;
+
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() =>
+                          setForm(current => ({
+                            ...current,
+                            bottle_item_id: m.id
+                          }))
+                        }
+                        className={`w-full px-3 py-2.5 flex items-center gap-3 text-left hover:bg-muted/30 ${
+                          selected
+                            ? 'bg-violet-50'
+                            : ''
+                        }`}
+                      >
+                        <span
+                          className={`w-4 h-4 rounded-full border flex items-center justify-center ${
+                            selected
+                              ? 'border-violet-600'
+                              : 'border-muted-foreground/40'
+                          }`}
+                        >
+                          {selected && (
+                            <span className="w-2 h-2 rounded-full bg-violet-600" />
+                          )}
+                        </span>
+
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium text-[12px] truncate">
+                            {m.name}
+                          </div>
+                          <div className="text-[10.5px] text-muted-foreground">
+                            {m.code || '—'}
+                          </div>
+                        </div>
+
+                        <div className="text-right">
+                          <div className="text-[12px] font-semibold tabular-nums">
+                            {stock.toLocaleString('id-ID')}
+                          </div>
+                          <div className="text-[10px] text-muted-foreground">
+                            {m.unit || 'pcs'}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+
+                  {filteredBottleMaterials.length === 0 && (
+                    <div className="px-3 py-6 text-center text-[11px] text-amber-600">
+                      Tidak ada stok botol {selectedBottleSize} ml.
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div className="border-t pt-4">
+              <div className="text-[12.5px] font-semibold mb-3">
+                4. Rencana Bottling
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="text-[12.5px] mb-1">
+                    Jumlah Botol *
+                  </Label>
+                  <NumberInput
+                    value={form.bottle_count}
+                    onChange={v =>
+                      setForm(current => ({
+                        ...current,
+                        bottle_count: v
+                      }))
+                    }
+                    allowDecimal={false}
+                    min={0}
+                    className="h-9 text-[13px]"
+                  />
+                </div>
+
+                <div>
+                  <Label className="text-[12.5px] mb-1">
+                    Volume/Botol
+                  </Label>
+                  <Input
+                    value={
+                      selectedBottleSize
+                        ? `${selectedBottleSize} ml`
+                        : ''
+                    }
+                    disabled
+                    className="h-9 text-[13px] bg-muted/40"
+                  />
+                </div>
+
+                <div>
+                  <Label className="text-[12.5px] mb-1">
+                    Total Volume
+                  </Label>
+                  <Input
+                    value={
+                      totalVolume
+                        ? `${totalVolume} ml`
+                        : ''
+                    }
+                    disabled
+                    className="h-9 text-[13px] bg-muted/40"
+                  />
+                </div>
+
+                <div>
+                  <Label className="text-[12.5px] mb-1">
+                    Tanggal
+                  </Label>
+                  <Input
+                    type="date"
+                    value={form.bottling_date}
+                    onChange={e =>
+                      setForm(current => ({
+                        ...current,
+                        bottling_date:
+                          e.target.value
+                      }))
+                    }
+                    className="h-9 text-[13px]"
+                  />
+                </div>
+
+                <div className="col-span-2">
+                  <Label className="text-[12.5px] mb-1">
+                    Operator *
+                  </Label>
+                  <Input
+                    value={form.operator}
+                    onChange={e =>
+                      setForm(current => ({
+                        ...current,
+                        operator:
+                          e.target.value
+                      }))
+                    }
+                    className="h-9 text-[13px]"
+                  />
+                </div>
+              </div>
+
+              <div className="mt-3">
+                <Label className="text-[12.5px] mb-1">
+                  Catatan
+                </Label>
+                <Textarea
+                  value={form.notes}
+                  onChange={e =>
+                    setForm(current => ({
+                      ...current,
+                      notes:
+                        e.target.value
+                    }))
+                  }
+                  rows={2}
+                  className="text-[13px]"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="px-4 py-3 border-t bg-muted/10 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div className="text-[11px] text-muted-foreground">
+            {form.available_bulk
+              ? `Bulk tersedia ${Number(form.available_bulk).toLocaleString('id-ID')} ml`
+              : 'Pilih batch bulk untuk mulai.'
+            }
+          </div>
+
+          <div className="flex items-center justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={openAdd}
+            >
+              Bersihkan
+            </Button>
+
+            <Button
+              type="button"
+              onClick={handleSubmit}
+              disabled={submitting}
+            >
+              {submitting
+                ? 'Memproses...'
+                : 'Proses Bottling'
+              }
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {/* RIWAYAT */}
+      <div className="mb-2">
+        <div className="font-semibold text-[14px]">
+          Riwayat Bottling
+        </div>
+        <div className="text-[11px] text-muted-foreground">
+          Work order Bottling yang sudah diproses.
+        </div>
+      </div>
 
       <DataTable
         columns={columns}
         data={data}
         loading={loading}
         emptyMessage="Belum ada bottling"
-        searchKeys={['bottling_number', 'batch_number', 'operator', 'output_product_name']}
+        searchKeys={[
+          'bottling_number',
+          'batch_number',
+          'operator',
+          'output_product_name'
+        ]}
         searchPlaceholder="Cari bottling..."
       />
 
+      {/* Detail work order existing tetap popup */}
       <FormModal
         open={!!detailItem}
         onClose={() => setDetailItem(null)}
-        title={detailItem ? `Work Order ${detailItem.bottling_number}` : 'Detail Work Order Bottling'}
+        title={
+          detailItem
+            ? `Work Order ${detailItem.bottling_number}`
+            : 'Detail Work Order Bottling'
+        }
         onSubmit={() => setDetailItem(null)}
         submitLabel="Tutup"
         size="lg"
@@ -413,19 +1125,95 @@ export default function Bottling() {
         {detailItem && (
           <div className="space-y-4">
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-[12.5px]">
-              <div><span className="text-muted-foreground">No. Bottling</span><div className="font-mono font-medium">{detailItem.bottling_number || '—'}</div></div>
-              <div><span className="text-muted-foreground">Tanggal</span><div>{detailItem.bottling_date || '—'}</div></div>
-              <div><span className="text-muted-foreground">Batch</span><div className="font-mono">{detailItem.batch_number || '—'}</div></div>
-              <div><span className="text-muted-foreground">Operator</span><div>{detailItem.operator || '—'}</div></div>
-              <div><span className="text-muted-foreground">Status</span><div className="mt-0.5"><StatusBadge status={detailItem.status} /></div></div>
-              <div><span className="text-muted-foreground">Produk Output</span><div className="font-medium">{detailItem.output_product_name || '—'}</div></div>
-              <div><span className="text-muted-foreground">Jumlah Botol</span><div className="tabular-nums font-medium">{Number(detailItem.bottle_count) || 0} botol</div></div>
-              <div><span className="text-muted-foreground">Volume Output</span><div className="tabular-nums">{Number(detailItem.total_output) || 0} ml</div></div>
-              <div><span className="text-muted-foreground">Sisa Bulk</span><div className="tabular-nums">{Number(detailItem.remaining_bulk) || 0} ml</div></div>
+              <div>
+                <span className="text-muted-foreground">
+                  No. Bottling
+                </span>
+                <div className="font-mono font-medium">
+                  {detailItem.bottling_number || '—'}
+                </div>
+              </div>
+
+              <div>
+                <span className="text-muted-foreground">
+                  Tanggal
+                </span>
+                <div>
+                  {detailItem.bottling_date || '—'}
+                </div>
+              </div>
+
+              <div>
+                <span className="text-muted-foreground">
+                  Batch
+                </span>
+                <div className="font-mono">
+                  {detailItem.batch_number || '—'}
+                </div>
+              </div>
+
+              <div>
+                <span className="text-muted-foreground">
+                  Operator
+                </span>
+                <div>
+                  {detailItem.operator || '—'}
+                </div>
+              </div>
+
+              <div>
+                <span className="text-muted-foreground">
+                  Status
+                </span>
+                <div className="mt-0.5">
+                  <StatusBadge
+                    status={detailItem.status}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <span className="text-muted-foreground">
+                  Produk Output
+                </span>
+                <div className="font-medium">
+                  {detailItem.output_product_name || '—'}
+                </div>
+              </div>
+
+              <div>
+                <span className="text-muted-foreground">
+                  Jumlah Botol
+                </span>
+                <div className="tabular-nums font-medium">
+                  {Number(detailItem.bottle_count) || 0} botol
+                </div>
+              </div>
+
+              <div>
+                <span className="text-muted-foreground">
+                  Volume Output
+                </span>
+                <div className="tabular-nums">
+                  {Number(detailItem.total_output) || 0} ml
+                </div>
+              </div>
+
+              <div>
+                <span className="text-muted-foreground">
+                  Sisa Bulk
+                </span>
+                <div className="tabular-nums">
+                  {Number(detailItem.remaining_bulk) || 0} ml
+                </div>
+              </div>
             </div>
 
             <div>
-              <div className="text-[12.5px] font-semibold mb-2">Detail Output Bottling</div>
+              <div className="text-[12.5px] font-semibold mb-2">
+                Detail Output Bottling
+              </div>
+
               <DataTable
                 columns={detailColumns}
                 data={detailOutputs}
@@ -437,189 +1225,15 @@ export default function Bottling() {
 
             {detailItem.notes && (
               <div className="rounded-md border border-border bg-muted/20 p-3 text-[12px]">
-                <span className="font-medium">Catatan:</span>{' '}{detailItem.notes}
+                <span className="font-medium">
+                  Catatan:
+                </span>
+                {' '}
+                {detailItem.notes}
               </div>
             )}
           </div>
         )}
-      </FormModal>
-
-      <FormModal
-        open={modalOpen}
-        onClose={() => setModalOpen(false)}
-        title="Bottling Baru"
-        onSubmit={handleSubmit}
-        submitting={submitting}
-        submitLabel="Proses Bottling"
-        size="lg"
-      >
-        <div>
-          <Label className="text-[12.5px] mb-1">Batch Bulk (Siap Bottling) *</Label>
-          <Select
-            value={form.stock_id}
-            onValueChange={v => {
-              const stock = bulkStock.find(b => b.id === v);
-              const source = products.find(p => p.id === stock?.item_id);
-
-              setForm(current => ({
-                ...current,
-                stock_id: v,
-                source_product_id: stock?.item_id || '',
-                source_product_name: source?.name || stock?.item_name || '',
-                source_brand_id: source?.brand_id || '',
-                source_brand_name: source?.brand_name || '',
-                output_product_id: '',
-                batch_id: stock?.batch_id || '',
-                batch_number: stock?.batch_number || '',
-                available_bulk: stock?.available_quantity || '',
-                volume_per_bottle: '',
-              }));
-            }}
-          >
-            <SelectTrigger className="h-9 text-[13px]">
-              <SelectValue placeholder="Pilih batch bulk" />
-            </SelectTrigger>
-            <SelectContent>
-              {bulkStock.map(stock => {
-                const source = products.find(p => p.id === stock.item_id);
-                return (
-                  <SelectItem key={stock.id} value={stock.id}>
-                    {getInventoryDisplayName(source?.name || stock.item_name, 'BULK')}
-                    {' '}({stock.available_quantity} ml)
-                    {stock.batch_number ? ` · ${stock.batch_number}` : ''}
-                  </SelectItem>
-                );
-              })}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <Label className="text-[12.5px] mb-1">Produk Sumber</Label>
-            <Input value={form.source_product_name} disabled className="h-9 text-[13px] bg-muted/40" />
-          </div>
-          <div>
-            <Label className="text-[12.5px] mb-1">Merk Sumber</Label>
-            <Input value={form.source_brand_name} disabled className="h-9 text-[13px] bg-muted/40" />
-          </div>
-          <div>
-            <Label className="text-[12.5px] mb-1">Batch</Label>
-            <Input value={form.batch_number} disabled className="h-9 text-[13px] bg-muted/40" />
-          </div>
-          <div>
-            <Label className="text-[12.5px] mb-1">Bulk Tersedia (ml)</Label>
-            <Input value={form.available_bulk} disabled className="h-9 text-[13px] bg-muted/40" />
-          </div>
-        </div>
-
-        <div>
-          <Label className="text-[12.5px] mb-1">Produk Jadi / SKU Output *</Label>
-          <SearchableSelect
-            value={form.output_product_id}
-            onValueChange={v => {
-              const output = products.find(p => p.id === v);
-              setForm(current => ({
-                ...current,
-                output_product_id: v,
-                volume_per_bottle:
-                  Number(output?.bottle_size) > 0
-                    ? Number(output.bottle_size)
-                    : current.volume_per_bottle,
-              }));
-            }}
-            options={outputProducts.map(p => ({
-              value: p.id,
-              label: `${p.name}${p.brand_name ? ` · ${p.brand_name}` : ''}${p.bottle_size ? ` (${p.bottle_size}ml)` : ''}`,
-              keywords: `${p.code || ''} ${p.name || ''} ${p.brand_name || ''} ${p.bottle_size || ''}`,
-            }))}
-            placeholder="Cari & pilih produk jadi / ukuran output"
-          />
-          <p className="text-[11px] text-muted-foreground mt-1">
-            Produk ini menjadi identitas stok setelah Bottling. Bulk sumber tetap tercatat pada batch yang sama.
-          </p>
-        </div>
-
-        <div>
-          <Label className="text-[12.5px] mb-1">Botol (Tipe Botol) *</Label>
-          <SearchableSelect
-            value={form.bottle_item_id}
-            onValueChange={v => setForm(current => ({ ...current, bottle_item_id: v }))}
-            options={bottleMaterials.map(m => {
-              const stock = bottleStocks[m.id] || 0;
-              return {
-                value: m.id,
-                label: `${m.name} · Stok ${stock} ${m.unit || 'pcs'}${stock <= 0 ? ' (habis)' : ''}`,
-                keywords: `${m.code || ''} ${m.name}`,
-              };
-            })}
-            placeholder="Cari & pilih botol dari stok"
-          />
-          {bottleMaterials.length === 0 && (
-            <p className="text-[11px] text-amber-600 mt-1">
-              Belum ada barang tipe Botol. Tambahkan di Master Barang (Tipe: Botol).
-            </p>
-          )}
-        </div>
-
-        <div className="grid grid-cols-3 gap-3">
-          <div>
-            <Label className="text-[12.5px] mb-1">Jumlah Botol *</Label>
-            <NumberInput
-              value={form.bottle_count}
-              onChange={v => setForm(current => ({ ...current, bottle_count: v }))}
-              allowDecimal={false}
-              min={0}
-              className="h-9 text-[13px]"
-            />
-          </div>
-
-          <div>
-            <Label className="text-[12.5px] mb-1">Volume/Botol (ml) *</Label>
-            <NumberInput
-              value={form.volume_per_bottle}
-              onChange={v => setForm(current => ({ ...current, volume_per_bottle: v }))}
-              allowDecimal
-              maxDecimals={1}
-              min={0}
-              className="h-9 text-[13px]"
-            />
-          </div>
-
-          <div>
-            <Label className="text-[12.5px] mb-1">Total Volume (ml)</Label>
-            <Input value={totalVolume || ''} disabled className="h-9 text-[13px] bg-muted/40" />
-          </div>
-
-          <div>
-            <Label className="text-[12.5px] mb-1">Tanggal</Label>
-            <Input
-              type="date"
-              value={form.bottling_date}
-              onChange={e => setForm(current => ({ ...current, bottling_date: e.target.value }))}
-              className="h-9 text-[13px]"
-            />
-          </div>
-
-          <div>
-            <Label className="text-[12.5px] mb-1">Operator *</Label>
-            <Input
-              value={form.operator}
-              onChange={e => setForm(current => ({ ...current, operator: e.target.value }))}
-              className="h-9 text-[13px]"
-            />
-          </div>
-        </div>
-
-        <div>
-          <Label className="text-[12.5px] mb-1">Catatan</Label>
-          <Textarea
-            value={form.notes}
-            onChange={e => setForm(current => ({ ...current, notes: e.target.value }))}
-            rows={2}
-            className="text-[13px]"
-          />
-        </div>
       </FormModal>
     </div>
   );
