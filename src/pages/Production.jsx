@@ -1211,9 +1211,7 @@ export default function Production() {
           ]
       );
 
-    if (
-      missing.length > 0
-    ) {
+    if (missing.length > 0) {
       toast({
         variant: 'destructive',
         title: 'Penimbangan belum lengkap',
@@ -1240,7 +1238,35 @@ export default function Production() {
       return;
     }
 
+    /*
+     * v3.7 ATOMIC PRODUCTION POSTING
+     *
+     * Tujuan:
+     * - preflight SEMUA stok sebelum movement pertama;
+     * - blok repost bila ada partial ledger lama;
+     * - bila error terjadi setelah sebagian movement berhasil,
+     *   semua movement produksi pada attempt ini dibalik otomatis;
+     * - status ProductionOrder dan actual_gram dikembalikan.
+     *
+     * Dengan ini error di material ke-N atau output tidak boleh
+     * meninggalkan stok orphan / partial posting.
+     */
     setSubmitting(true);
+
+    const originalOrderState = {
+      status: editing.status,
+      actual_volume:
+        Number(editing.actual_volume || 0),
+      actual_output_quantity:
+        Number(
+          editing.actual_output_quantity || 0
+        ),
+      waste_quantity:
+        Number(editing.waste_quantity || 0)
+    };
+
+    let premixOutputMaterial = null;
+    let originalPremixHpp = null;
 
     try {
       const consumeType =
@@ -1248,6 +1274,145 @@ export default function Production() {
           ? 'premix_consumption'
           : 'production_consumption';
 
+      /*
+       * 0A. PARTIAL-LEDGER GUARD
+       *
+       * Production yang fresh belum boleh punya consumption/output
+       * ledger. Jika ada, kemungkinan attempt lama meninggalkan orphan.
+       * Jangan lanjut supaya tidak terjadi double posting.
+       */
+      const existingReferenceLedgers =
+        await base44.entities.StockLedger.filter({
+          reference_type: 'production',
+          reference_id: editing.id
+        });
+
+      const existingNumberLedgers =
+        editing.production_number
+          ? await base44.entities.StockLedger.filter({
+              transaction_number:
+                editing.production_number
+            })
+          : [];
+
+      const existingLedgers =
+        Array.from(
+          new Map(
+            [
+              ...(existingReferenceLedgers || []),
+              ...(existingNumberLedgers || [])
+            ].map(row => [row.id, row])
+          ).values()
+        );
+
+      const productionMovementTypes = [
+        'production_consumption',
+        'premix_consumption',
+        'production_output',
+        'premix_output'
+      ];
+
+      const existingProductionMovements =
+        existingLedgers.filter(
+          row =>
+            productionMovementTypes.includes(
+              row.transaction_type
+            )
+        );
+
+      if (
+        existingProductionMovements.length > 0
+      ) {
+        throw new Error(
+          'Ditemukan ledger produksi yang sudah tercatat pada order ini. ' +
+          'Posting diblok untuk mencegah double posting / orphan. ' +
+          'Lakukan audit atau reversal transaksi lama terlebih dahulu.'
+        );
+      }
+
+      /*
+       * 0B. PREFLIGHT SEMUA BAHAN
+       *
+       * Cek stok seluruh material sebelum movement pertama.
+       * Identity mengikuti aturan yang sama dengan consumeMaterialStock.
+       */
+      const preflight =
+        await Promise.all(
+          mats.map(async m => {
+            const mat =
+              materials.find(
+                x =>
+                  x.id ===
+                  m.material_id
+              );
+
+            const isPremixMaterial =
+              String(
+                mat?.material_type || ''
+              ).toUpperCase() === 'PREMIX';
+
+            const balanceFilter = {
+              item_id: m.material_id,
+              item_type: 'material'
+            };
+
+            if (isPremixMaterial) {
+              balanceFilter.inventory_status =
+                'PREMIX';
+            }
+
+            const balances =
+              await base44.entities.StockBalance.filter(
+                balanceFilter
+              );
+
+            const available =
+              (balances || []).reduce(
+                (sum, row) =>
+                  sum +
+                  Number(
+                    row.available_quantity ??
+                    row.quantity ??
+                    0
+                  ),
+                0
+              );
+
+            const required =
+              Number(
+                m.required_gram || 0
+              );
+
+            return {
+              name: m.material_name,
+              available,
+              required,
+              sufficient:
+                available >= required
+            };
+          })
+        );
+
+      const insufficient =
+        preflight.filter(
+          row => !row.sufficient
+        );
+
+      if (insufficient.length > 0) {
+        throw new Error(
+          'Preflight stok gagal: ' +
+          insufficient
+            .map(
+              row =>
+                `${row.name} stok ${row.available}, butuh ${row.required}`
+            )
+            .join('; ')
+        );
+      }
+
+      /*
+       * 1. UPDATE ACTUAL + CONSUME MATERIALS
+       */
       for (const m of mats) {
         const actual =
           Number(m.required_gram) || 0;
@@ -1295,6 +1460,9 @@ export default function Production() {
           0
         );
 
+      /*
+       * 2A. PREMIX OUTPUT
+       */
       if (isPremixProduction) {
         const outputMat =
           materials.find(
@@ -1302,6 +1470,16 @@ export default function Production() {
               m.id ===
               editing.output_material_id
           );
+
+        premixOutputMaterial =
+          outputMat || null;
+
+        originalPremixHpp =
+          outputMat
+            ? Number(
+                outputMat.last_purchase_price || 0
+              )
+            : null;
 
         const outputQty =
           Number(editing.target_quantity) ||
@@ -1325,7 +1503,10 @@ export default function Production() {
                 sum +
                 (
                   Number(m.required_gram || 0) *
-                  Number(mat?.last_purchase_price || 0)
+                  Number(
+                    mat?.last_purchase_price ||
+                    0
+                  )
                 )
               );
             },
@@ -1404,9 +1585,13 @@ export default function Production() {
 
         toast({
           title: 'Produksi Premix berhasil diposting',
-          description: 'Stok bahan dikurangi, stok premix ditambahkan'
+          description:
+            'Stok bahan dikurangi, stok premix ditambahkan'
         });
 
+      /*
+       * 2B. FINISHED PRODUCT / BULK OUTPUT
+       */
       } else {
         let actualVolume = 0;
 
@@ -1422,7 +1607,8 @@ export default function Production() {
               : (
                   Number(mat?.density) ||
                   (
-                    m.material_type === 'vegetable_glycerin'
+                    m.material_type ===
+                    'vegetable_glycerin'
                       ? 1.261
                       : 1.036
                   )
@@ -1430,20 +1616,27 @@ export default function Production() {
 
           if (d > 0) {
             actualVolume +=
-              Number(m.required_gram || 0) /
+              Number(
+                m.required_gram || 0
+              ) /
               d;
           }
         }
 
         const totalInputCost =
           mats.reduce(
-            (s, m) =>
-              s +
-              Number(m.required_gram || 0) *
+            (sum, m) =>
+              sum +
+              Number(
+                m.required_gram || 0
+              ) *
               Number(
                 materials.find(
-                  x => x.id === m.material_id
-                )?.last_purchase_price || 0
+                  x =>
+                    x.id ===
+                    m.material_id
+                )?.last_purchase_price ||
+                0
               ),
             0
           );
@@ -1463,7 +1656,10 @@ export default function Production() {
             editing.product_id ||
             editing.recipe_id,
           item_name:
-            `Bulk ${editing.product_name || editing.recipe_code}`,
+            `Bulk ${
+              editing.product_name ||
+              editing.recipe_code
+            }`,
           item_code:
             editing.batch_number,
           batch_id: editing.id,
@@ -1505,19 +1701,263 @@ export default function Production() {
 
         toast({
           title: 'Produksi berhasil diposting',
-          description: 'Stok bahan dikurangi, bulk masuk'
+          description:
+            'Stok bahan dikurangi, bulk masuk'
         });
       }
 
       setDetailOpen(false);
-      loadData();
+      await loadData();
 
     } catch (e) {
+      /*
+       * AUTO ROLLBACK
+       *
+       * Ambil movement yang mungkin sempat berhasil pada attempt ini
+       * lalu balik dengan identity + frozen unit_cost yang sama.
+       */
+      let rollbackOk = true;
+      const rollbackErrors = [];
+
+      try {
+        const [referenceRows, numberRows] =
+          await Promise.all([
+            base44.entities.StockLedger.filter({
+              reference_type: 'production',
+              reference_id: editing.id
+            }),
+            editing.production_number
+              ? base44.entities.StockLedger.filter({
+                  transaction_number:
+                    editing.production_number
+                })
+              : Promise.resolve([])
+          ]);
+
+        const movementTypes = [
+          'production_consumption',
+          'premix_consumption',
+          'production_output',
+          'premix_output'
+        ];
+
+        const rowsToReverse =
+          Array.from(
+            new Map(
+              [
+                ...(referenceRows || []),
+                ...(numberRows || [])
+              ].map(row => [row.id, row])
+            ).values()
+          )
+            .filter(
+              row =>
+                movementTypes.includes(
+                  row.transaction_type
+                ) &&
+                !String(
+                  row.transaction_type || ''
+                ).includes('reversal')
+            )
+            .sort((a, b) => {
+              const da =
+                new Date(
+                  a.created_date ||
+                  a.transaction_date ||
+                  0
+                ).getTime();
+
+              const db =
+                new Date(
+                  b.created_date ||
+                  b.transaction_date ||
+                  0
+                ).getTime();
+
+              return db - da;
+            });
+
+        for (const row of rowsToReverse) {
+          try {
+            await recordStockMovement({
+              item_type:
+                row.item_type,
+              item_id:
+                row.item_id,
+              item_code:
+                row.item_code || '',
+              item_name:
+                row.item_name || '',
+              batch_id:
+                row.batch_id || '',
+              batch_number:
+                row.batch_number || '',
+              warehouse_id:
+                row.warehouse_id || '',
+              warehouse_name:
+                row.warehouse_name || '',
+              inventory_status:
+                row.inventory_status || '',
+              quantity_in:
+                Number(
+                  row.quantity_out || 0
+                ),
+              quantity_out:
+                Number(
+                  row.quantity_in || 0
+                ),
+              unit:
+                row.unit || '',
+              unit_cost:
+                Number(
+                  row.unit_cost || 0
+                ),
+              transaction_type:
+                'production_auto_reversal',
+              transaction_number:
+                `ROLLBACK-${editing.production_number}`,
+              reference_type:
+                'production',
+              reference_id:
+                editing.id,
+              notes:
+                `AUTO ROLLBACK Production · ${row.transaction_type} · ${editing.production_number}`
+            });
+          } catch (rollbackMovementError) {
+            rollbackOk = false;
+            rollbackErrors.push(
+              rollbackMovementError?.message ||
+              'Gagal reversal movement'
+            );
+          }
+        }
+
+        /*
+         * Kembalikan work instruction ke kondisi sebelum posting.
+         */
+        for (const m of mats) {
+          try {
+            await base44.entities.ProductionMaterial.update(
+              m.id,
+              {
+                actual_gram: 0,
+                deviation_gram: 0,
+                deviation_percent: 0
+              }
+            );
+          } catch (materialResetError) {
+            rollbackOk = false;
+            rollbackErrors.push(
+              materialResetError?.message ||
+              'Gagal reset ProductionMaterial'
+            );
+          }
+        }
+
+        /*
+         * Kembalikan status ProductionOrder bila sempat berubah.
+         */
+        try {
+          await base44.entities.ProductionOrder.update(
+            editing.id,
+            {
+              status:
+                originalOrderState.status,
+              actual_volume:
+                originalOrderState.actual_volume,
+              actual_output_quantity:
+                originalOrderState.actual_output_quantity,
+              waste_quantity:
+                originalOrderState.waste_quantity
+            }
+          );
+        } catch (orderResetError) {
+          rollbackOk = false;
+          rollbackErrors.push(
+            orderResetError?.message ||
+            'Gagal reset ProductionOrder'
+          );
+        }
+
+        /*
+         * PREMIX HPP snapshot dikembalikan bila sempat diubah.
+         */
+        if (
+          premixOutputMaterial &&
+          originalPremixHpp != null
+        ) {
+          try {
+            await base44.entities.Material.update(
+              premixOutputMaterial.id,
+              {
+                last_purchase_price:
+                  originalPremixHpp
+              }
+            );
+          } catch (hppResetError) {
+            rollbackOk = false;
+            rollbackErrors.push(
+              hppResetError?.message ||
+              'Gagal restore HPP premix'
+            );
+          }
+        }
+
+        try {
+          await createAuditLog({
+            module: 'Produksi',
+            action:
+              rollbackOk
+                ? 'Auto Rollback'
+                : 'Auto Rollback Partial',
+            entity_type:
+              'ProductionOrder',
+            entity_id:
+              editing.id,
+            reference_number:
+              editing.production_number,
+            reason:
+              e?.message ||
+              'Production posting failed',
+            data_after: {
+              rollback_ok:
+                rollbackOk,
+              rollback_errors:
+                rollbackErrors
+            }
+          });
+        } catch {
+          // Audit failure tidak boleh menggagalkan rollback stok.
+        }
+
+      } catch (rollbackFatalError) {
+        rollbackOk = false;
+        rollbackErrors.push(
+          rollbackFatalError?.message ||
+          'Rollback fatal error'
+        );
+      }
+
       toast({
         variant: 'destructive',
-        title: 'Gagal posting',
-        description: e.message
+        title:
+          rollbackOk
+            ? 'Posting gagal · stok dikembalikan'
+            : 'Posting gagal · rollback perlu diperiksa',
+        description:
+          rollbackOk
+            ? (
+                `${e?.message || 'Terjadi kesalahan'} · ` +
+                'Tidak ada perubahan stok bersih.'
+              )
+            : (
+                `${e?.message || 'Terjadi kesalahan'} · ` +
+                `Rollback tidak lengkap: ${rollbackErrors.join('; ')}`
+              )
       });
+
+      await loadData();
+
     } finally {
       setSubmitting(false);
     }
