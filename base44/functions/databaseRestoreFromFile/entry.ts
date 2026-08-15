@@ -1,5 +1,4 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.40';
-
 import {
   APP_ENVIRONMENT,
   MAX_RESTORE_FILE_SIZE,
@@ -18,7 +17,7 @@ import {
  * - auth admin
  * - download file
  * - validate manifest/checksum/schema
- * - auto backup sekali
+ * - auto backup sekali (honor autoBackup flag)
  * - buat DatabaseRestoreSession
  *
  * Function ini TIDAK menghapus / restore data bisnis.
@@ -27,7 +26,6 @@ import {
 
 function createRestoreSessionCode() {
   const now = new Date();
-
   const pad = value =>
     String(value).padStart(2, '0');
 
@@ -91,10 +89,6 @@ export default async function (req) {
   let user;
 
   try {
-    /* =====================================================
-       AUTH
-    ===================================================== */
-
     base44 =
       createClientFromRequest(req);
 
@@ -136,10 +130,6 @@ export default async function (req) {
         }
       );
     }
-
-    /* =====================================================
-       REQUEST
-    ===================================================== */
 
     const body =
       await req
@@ -199,10 +189,6 @@ export default async function (req) {
       );
     }
 
-    /* =====================================================
-       DOWNLOAD BACKUP
-    ===================================================== */
-
     const signed =
       await base44
         .asServiceRole
@@ -255,10 +241,6 @@ export default async function (req) {
       );
     }
 
-    /* =====================================================
-       VALIDATE BACKUP
-    ===================================================== */
-
     const validation =
       await parseAndValidateBackup(
         text,
@@ -277,19 +259,14 @@ export default async function (req) {
             action_time:
               new Date()
                 .toISOString(),
-
             user_name:
               user.email || '',
-
             module:
               'database',
-
             action:
               'DATABASE_RESTORE_FROM_LOCAL_FAILED',
-
             reference_number:
               file_name || '',
-
             reason:
               validation.error,
           });
@@ -299,7 +276,6 @@ export default async function (req) {
         {
           error:
             validation.error,
-
           needsPassword:
             validation.needsPassword ||
             false,
@@ -309,10 +285,6 @@ export default async function (req) {
         }
       );
     }
-
-    /* =====================================================
-       SCHEMA CHECK
-    ===================================================== */
 
     if (!validation.schemaOk) {
       const reason =
@@ -333,19 +305,14 @@ export default async function (req) {
             action_time:
               new Date()
                 .toISOString(),
-
             user_name:
               user.email || '',
-
             module:
               'database',
-
             action:
               'DATABASE_RESTORE_FROM_LOCAL_FAILED',
-
             reference_number:
               file_name || '',
-
             reason,
           });
       } catch {}
@@ -366,10 +333,6 @@ export default async function (req) {
         }
       );
     }
-
-    /* =====================================================
-       BUILD RESTORE PLAN
-    ===================================================== */
 
     const tables =
       validation.tables || {};
@@ -395,9 +358,7 @@ export default async function (req) {
     }
 
     const expected = {};
-
     const restored = {};
-
     let totalRecords = 0;
 
     for (
@@ -425,35 +386,27 @@ export default async function (req) {
         totalRecords
       );
 
-    /* =====================================================
-       AUTO BACKUP — ONCE
-    ===================================================== */
-
     let autoBackupCode =
       null;
 
-    if (false) {
+    if (autoBackup) {
       const ab =
         await createBackup(
           base44,
           {
             name:
               'Auto-backup sebelum restore batch',
-
             notes:
               `Auto backup sebelum restore ` +
               `dari ${
                 file_name ||
                 'file upload'
               }`,
-
             createdBy:
               user.email ||
               user.id,
-
             environment:
               APP_ENVIRONMENT,
-
             backupType:
               'operational',
           }
@@ -473,10 +426,6 @@ export default async function (req) {
         ab.record.backup_code;
     }
 
-    /* =====================================================
-       CREATE SESSION
-    ===================================================== */
-
     const sessionCode =
       createRestoreSessionCode();
 
@@ -487,13 +436,10 @@ export default async function (req) {
     const progressState = {
       plan:
         restoreEntities,
-
       completed:
         [],
-
       deleted:
         [],
-
       phase:
         'DELETE',
     };
@@ -517,10 +463,6 @@ export default async function (req) {
           status:
             'READY',
 
-          /*
-           * Batch worker akan memulai
-           * dari phase DELETE.
-           */
           current_entity:
             '__DELETE__',
 
@@ -564,10 +506,6 @@ export default async function (req) {
           id_maps_json:
             JSON.stringify({}),
 
-          /*
-           * Dipakai juga untuk menyimpan
-           * restore plan + phase.
-           */
           completed_entities_json:
             JSON.stringify(
               progressState
@@ -603,10 +541,6 @@ export default async function (req) {
             user.id ||
             'admin',
         });
-
-    /* =====================================================
-       AUDIT
-    ===================================================== */
 
     try {
       await base44
@@ -657,10 +591,6 @@ export default async function (req) {
         });
     } catch {}
 
-    /* =====================================================
-       RESPONSE
-    ===================================================== */
-
     return Response.json({
       ok:
         true,
@@ -706,10 +636,6 @@ export default async function (req) {
       encrypted:
         !!validation.encrypted,
 
-      /*
-       * Frontend selanjutnya memanggil:
-       * databaseRestoreBatch
-       */
       next:
         'databaseRestoreBatch',
     });
