@@ -284,6 +284,82 @@ export default function Excise() {
         Number(exciseStocks[material.id] || 0) > 0
     ).length;
 
+  /*
+   * v3.7 UI ONLY — BOX RECOMMENDATION BY PRODUCT NAME
+   *
+   * Recommendation hanya berdasarkan kemiripan nama produk.
+   * Nicotine strength, ukuran, dan kata generik packaging diabaikan.
+   * Semua box dengan stok tetap tersedia sebagai manual override.
+   */
+  const normalizeBoxMatchText = (value) =>
+    String(value || '')
+      .toUpperCase()
+      .replace(/\b\d+(?:[.,]\d+)?\s*MG\b/g, ' ')
+      .replace(/\b\d+(?:[.,]\d+)?\s*ML\b/g, ' ')
+      .replace(/\b(SALT|FREEBASE|BOX|PACKAGING|KEMASAN)\b/g, ' ')
+      .replace(/[^A-Z0-9]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  const productBoxMatchText =
+    normalizeBoxMatchText(selectedProduct?.name);
+
+  const isRecommendedBox = (material) => {
+    if (!productBoxMatchText) return false;
+
+    const boxText =
+      normalizeBoxMatchText(
+        [
+          material?.name,
+          material?.code,
+          material?.specification,
+        ]
+          .filter(Boolean)
+          .join(' ')
+      );
+
+    if (!boxText) return false;
+
+    const productWords =
+      productBoxMatchText
+        .split(' ')
+        .filter(word => word.length >= 3);
+
+    if (!productWords.length) return false;
+
+    return productWords.every(
+      word => boxText.includes(word)
+    );
+  };
+
+  const recommendedBoxMaterials =
+    [...boxMaterials]
+      .filter(
+        material =>
+          Number(exciseStocks[material.id] || 0) > 0
+      )
+      .sort((a, b) => {
+        const aRecommended =
+          isRecommendedBox(a);
+
+        const bRecommended =
+          isRecommendedBox(b);
+
+        if (aRecommended !== bRecommended) {
+          return aRecommended ? -1 : 1;
+        }
+
+        return String(a?.name || '').localeCompare(
+          String(b?.name || ''),
+          'id'
+        );
+      });
+
+  const recommendedBoxCount =
+    recommendedBoxMaterials.filter(
+      isRecommendedBox
+    ).length;
+
   const onCukaiChange = (materialId) => {
     const m = exciseMaterials.find(x => x.id === materialId);
 
@@ -1691,17 +1767,11 @@ export default function Excise() {
                     }));
                   }}
                   options={
-                    boxMaterials
-                      .filter(
-                        m =>
-                          (
-                            exciseStocks[m.id] ||
-                            0
-                          ) > 0
-                      )
+                    recommendedBoxMaterials
                       .map(m => ({
                         value: m.id,
                         label:
+                          `${isRecommendedBox(m) ? '★ ' : ''}` +
                           `${m.name} · Stok ${exciseStocks[m.id] || 0} ${m.unit || 'pcs'}`,
                         keywords:
                           `${m.name || ''} ${m.code || ''} ${m.material_code || ''}`,
@@ -1710,6 +1780,15 @@ export default function Excise() {
                   placeholder="Cari nama / kode box..."
                   className="h-9 text-[13px]"
                 />
+
+                {selectedProduct && (
+                  <p className="text-[11px] text-violet-700 mt-1">
+                    ★ Rekomendasi box untuk {selectedProduct.name}
+                    {recommendedBoxCount > 0
+                      ? ` · ${recommendedBoxCount} pilihan stok tersedia`
+                      : ' · belum ada box dengan nama cocok'}
+                  </p>
+                )}
               </div>
 
               <div>
