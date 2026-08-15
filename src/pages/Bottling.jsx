@@ -346,6 +346,7 @@ export default function Bottling() {
     let order = null;
     let createdOutputRow = null;
     let botNumber = '';
+    let exactBulkAvailable = null;
 
     try {
       /*
@@ -390,11 +391,11 @@ export default function Bottling() {
         ) ||
         null;
 
-      const exactBulkAvailable =
+      exactBulkAvailable =
         Number(
           exactBulkBalance?.available_quantity ??
-          exactBulkBalance?.quantity ??
-          0
+            exactBulkBalance?.quantity ??
+            0
         );
 
       if (

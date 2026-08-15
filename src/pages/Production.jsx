@@ -13,7 +13,7 @@ import { Plus, Play, CheckCircle, AlertTriangle, RefreshCw, RotateCcw, X, Chevro
 import { calculateRecipe } from '@/lib/recipeCalculator';
 import { calculatePremixQuantities } from '@/lib/premix';
 import { generateProductionNumber, generateBatchNumber } from '@/lib/sequence';
-import { recordStockMovement, getStockBalance, createAuditLog } from '@/lib/stockUtils';
+import { recordStockMovement, getStockBalance, createAuditLog, buildMaterialStockLookup } from '@/lib/stockUtils';
 import NumberInput from '@/components/NumberInput';
 import PdfButton from '@/components/PdfButton';
 import { exportDocumentToPDF } from '@/lib/pdfExport';
@@ -341,14 +341,12 @@ export default function Production() {
         m => m.material_category === 'vegetable_glycerin'
       );
 
+      const getStock = await buildMaterialStockLookup();
       const rows = [];
 
       for (const recipe of recipes) {
         if (!canSelectRecipeForProduction(user, recipe)) continue;
-
-        const ingredients = await base44.entities.RecipeIngredient.filter({
-          recipe_id: recipe.id
-        });
+        const ingredients = await base44.entities.RecipeIngredient.filter({ recipe_id: recipe.id });
 
         const premix = recipe.recipe_type === 'PREMIX';
         const basis = recipe.calculation_basis || 'W_W';
@@ -403,10 +401,7 @@ export default function Production() {
         const checks = await Promise.all(
           recipeItems.map(async item => {
             const mat = matsById[item.material_id];
-            const stockRaw = await getMaterialAvailableStock(
-              item.material_id,
-              mat
-            );
+            const stockRaw = getStock(item.material_id, mat);
 
             const density = Number(
               mat?.density ||

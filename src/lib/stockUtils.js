@@ -345,6 +345,60 @@ export async function getStockBalance(
 
 
 /**
+ * Build a single-call stock lookup for materials.
+ *
+ * Returns a function getStock(materialId, material) that mirrors
+ * getMaterialAvailableStock() but reads from an in-memory map,
+ * avoiding N×M StockBalance.filter calls (rate limit).
+ *
+ * - non-PREMIX material: sum of ALL balances for item_id
+ * - PREMIX material: sum of balances with inventory_status === 'PREMIX'
+ */
+export async function buildMaterialStockLookup() {
+  const balances =
+    await base44.entities.StockBalance.filter({
+      item_type: 'material',
+    });
+
+  const totalByItem = new Map();
+  const premixByItem = new Map();
+
+  for (const bal of balances || []) {
+    const qty =
+      Number(
+        bal.available_quantity ??
+        bal.quantity ??
+        0
+      );
+
+    totalByItem.set(
+      bal.item_id,
+      (totalByItem.get(bal.item_id) || 0) + qty
+    );
+
+    if (
+      String(bal.inventory_status || '').toUpperCase() === 'PREMIX'
+    ) {
+      premixByItem.set(
+        bal.item_id,
+        (premixByItem.get(bal.item_id) || 0) + qty
+      );
+    }
+  }
+
+  return (materialId, material) => {
+    const isPremixMaterial =
+      String(material?.material_type || '').toUpperCase() === 'PREMIX';
+
+    if (!isPremixMaterial) {
+      return totalByItem.get(materialId) || 0;
+    }
+
+    return premixByItem.get(materialId) || 0;
+  };
+}
+
+/**
  * Get all stock balances.
  *
  * Optional item_type:
