@@ -231,226 +231,349 @@ export default function Bottling() {
       return;
     }
 
-    if (totalVolume > Number(form.available_bulk)) {
-      toast({
-        variant: 'destructive',
-        title: 'Volume melebihi bulk tersedia',
-        description: `Tersedia: ${form.available_bulk} ml`,
-      });
-      return;
-    }
+    const sourceProduct =
+      products.find(
+        p => p.id === form.source_product_id
+      );
 
-    const sourceProduct = products.find(p => p.id === form.source_product_id);
-    const outputProduct = products.find(p => p.id === form.output_product_id);
-    const bottleMat = bottleMaterials.find(m => m.id === form.bottle_item_id);
-    const bottleStock = bottleStocks[form.bottle_item_id] || 0;
-    const selectedBulkBalance = bulkStock.find(b => b.id === form.stock_id);
+    const outputProduct =
+      products.find(
+        p => p.id === form.output_product_id
+      );
+
+    const bottleMat =
+      bottleMaterials.find(
+        m => m.id === form.bottle_item_id
+      );
+
+    const selectedBulkBalance =
+      bulkStock.find(
+        b => b.id === form.stock_id
+      );
 
     if (!sourceProduct) {
-      toast({ variant: 'destructive', title: 'Produk sumber bulk tidak ditemukan' });
+      toast({
+        variant: 'destructive',
+        title: 'Produk sumber bulk tidak ditemukan'
+      });
       return;
     }
 
     if (!outputProduct) {
-      toast({ variant: 'destructive', title: 'Produk jadi tidak ditemukan' });
-      return;
-    }
-
-    if (!bottleMat) {
-      toast({ variant: 'destructive', title: 'Botol tidak ditemukan' });
-      return;
-    }
-
-    if (Number(form.bottle_count) > bottleStock) {
       toast({
         variant: 'destructive',
-        title: 'Stok botol tidak cukup',
-        description: `Tersedia: ${bottleStock}`,
+        title: 'Produk jadi tidak ditemukan'
       });
       return;
     }
 
-    /*
-     * v3.7 STOCK IDENTITY FIX
-     *
-     * UI sebelumnya membaca stok botol secara aggregate, tetapi saat posting
-     * recordStockMovement mencari identity kosong. Akibatnya stok yang nyata
-     * tersedia bisa terbaca 0.
-     *
-     * Sebelum membuat BottlingOrder, baca StockBalance aktual dan kunci
-     * konsumsi ke identity batch + warehouse + stage/status yang benar.
-     */
+    if (!bottleMat) {
+      toast({
+        variant: 'destructive',
+        title: 'Botol tidak ditemukan'
+      });
+      return;
+    }
+
+    if (!selectedBulkBalance) {
+      toast({
+        variant: 'destructive',
+        title: 'Saldo bulk tidak ditemukan',
+        description: 'Refresh halaman lalu pilih batch bulk kembali.'
+      });
+      return;
+    }
+
     const bottleItemType =
       bottleMat.material_type
         ? 'material'
         : 'product';
 
-    const bottleBalanceRows =
-      await base44.entities.StockBalance.filter({
-        item_id: bottleMat.id,
-        item_type: bottleItemType
-      });
-
-    const bottleLots =
-      (bottleBalanceRows || [])
-        .filter(row =>
-          Number(
-            row.available_quantity ??
-            row.quantity ??
-            0
-          ) > 0
-        )
-        .sort((a, b) => {
-          const da =
-            a.created_date ||
-            a.updated_date ||
-            '';
-          const db =
-            b.created_date ||
-            b.updated_date ||
-            '';
-          return da.localeCompare(db);
-        });
-
-    const exactBottleStock =
-      bottleLots.reduce(
-        (sum, row) =>
-          sum +
-          Number(
-            row.available_quantity ??
-            row.quantity ??
-            0
-          ),
-        0
-      );
-
-    if (
-      Number(form.bottle_count) >
-      exactBottleStock
-    ) {
-      toast({
-        variant: 'destructive',
-        title: 'Stok botol tidak cukup',
-        description:
-          `Tersedia aktual: ${exactBottleStock}, dibutuhkan: ${Number(form.bottle_count)}`,
-      });
-      return;
-    }
+    const bottleQty =
+      Number(form.bottle_count) || 0;
 
     setSubmitting(true);
 
+    let order = null;
+    let createdOutputRow = null;
+    let botNumber = '';
+
     try {
-      const botNumber = await generateOrderNumber('BOT', 'BottlingOrder');
+      /*
+       * ========================================================
+       * v3.7 BOTTLING ATOMIC POSTING
+       * ========================================================
+       *
+       * 1. Preflight semua stok SEBELUM movement pertama.
+       * 2. Order dibuat dengan status sedang_diproses.
+       * 3. Bulk + botol + output stock diposting.
+       * 4. BottlingOutput dibuat setelah stock movement sukses.
+       * 5. Order baru diubah menjadi siap_labeling di langkah akhir.
+       * 6. Bila salah satu langkah gagal, semua stock movement
+       *    pada order ini dibalik otomatis menggunakan identity
+       *    ledger asli + frozen unit_cost.
+       */
 
-      const order = await base44.entities.BottlingOrder.create({
-        bottling_number: botNumber,
-        production_id: '',
-        batch_number: form.batch_number,
-        bottling_date: form.bottling_date,
-        operator: form.operator,
-        total_bulk_processed: totalVolume,
-        total_output: totalVolume,
-        waste: 0,
-        remaining_bulk: Number(form.available_bulk) - totalVolume,
-        status: 'siap_labeling',
-        notes: form.notes,
-      });
+      /*
+       * PREFLIGHT BULK — re-read exact StockBalance identity.
+       */
+      const latestBulkBalances =
+        await base44.entities.StockBalance.filter({
+          item_id: sourceProduct.id,
+          item_type: 'product',
+          batch_id:
+            selectedBulkBalance.batch_id ||
+            form.batch_id,
+          inventory_status: 'BULK'
+        });
 
-      await base44.entities.BottlingOutput.create({
-        bottling_id: order.id,
-        product_id: outputProduct.id,
-        product_name: outputProduct.name,
-        bottle_size: Number(form.volume_per_bottle),
-        bottle_count: Number(form.bottle_count),
-        volume_per_bottle: Number(form.volume_per_bottle),
-        total_volume: totalVolume,
-        bottle_item_id: bottleMat.id,
-        bottle_item_code: bottleMat.code || '',
-        bottle_item_name: bottleMat.name,
-        bottle_stock_used: Number(form.bottle_count),
-        output_status: 'siap_labeling',
+      const exactBulkBalance =
+        (latestBulkBalances || []).find(
+          row =>
+            (row.item_id || '') ===
+              (selectedBulkBalance.item_id || sourceProduct.id) &&
+            (row.batch_id || '') ===
+              (selectedBulkBalance.batch_id || form.batch_id || '') &&
+            (row.warehouse_id || '') ===
+              (selectedBulkBalance.warehouse_id || '') &&
+            (row.inventory_status || '') ===
+              (selectedBulkBalance.inventory_status || 'BULK')
+        ) ||
+        null;
+
+      const exactBulkAvailable =
+        Number(
+          exactBulkBalance?.available_quantity ??
+          exactBulkBalance?.quantity ??
+          0
+        );
+
+      if (
+        !exactBulkBalance ||
+        exactBulkAvailable < totalVolume
+      ) {
+        throw new Error(
+          `Preflight bulk gagal. Tersedia ${exactBulkAvailable} ml, ` +
+          `dibutuhkan ${totalVolume} ml.`
+        );
+      }
+
+      /*
+       * PREFLIGHT BOTOL — re-read all available lots.
+       */
+      const bottleBalanceRows =
+        await base44.entities.StockBalance.filter({
+          item_id: bottleMat.id,
+          item_type: bottleItemType
+        });
+
+      const bottleLots =
+        (bottleBalanceRows || [])
+          .filter(
+            row =>
+              Number(
+                row.available_quantity ??
+                row.quantity ??
+                0
+              ) > 0
+          )
+          .sort((a, b) => {
+            const da =
+              a.created_date ||
+              a.updated_date ||
+              '';
+            const db =
+              b.created_date ||
+              b.updated_date ||
+              '';
+            return da.localeCompare(db);
+          });
+
+      const exactBottleStock =
+        bottleLots.reduce(
+          (sum, row) =>
+            sum +
+            Number(
+              row.available_quantity ??
+                row.quantity ??
+                0
+            ),
+          0
+        );
+
+      if (
+        bottleQty >
+        exactBottleStock
+      ) {
+        throw new Error(
+          `Preflight botol gagal. Tersedia ${exactBottleStock}, ` +
+          `dibutuhkan ${bottleQty}.`
+        );
+      }
+
+      /*
+       * HPP snapshot sebelum movement.
+       */
+      const bulkLedgers =
+        await base44.entities.StockLedger.filter({
+          batch_id:
+            form.batch_id,
+          item_id:
+            sourceProduct.id,
+          inventory_status: 'BULK',
+          transaction_type:
+            'production_output',
+        });
+
+      const latestBulkLedger =
+        [...(bulkLedgers || [])].sort(
+          (a, b) =>
+            new Date(
+              b.transaction_date ||
+              b.created_date ||
+              0
+            ).getTime() -
+            new Date(
+              a.transaction_date ||
+              a.created_date ||
+              0
+            ).getTime()
+        )[0];
+
+      const hppBulkPerMl =
+        Number(
+          latestBulkLedger?.unit_cost
+        ) || 0;
+
+      const bottleHbt =
+        Number(
+          bottleMat?.last_purchase_price
+        ) || 0;
+
+      const bulkCost =
+        totalVolume *
+        hppBulkPerMl;
+
+      const bottleCost =
+        bottleQty *
+        bottleHbt;
+
+      const totalBottlingCost =
+        bulkCost +
+        bottleCost;
+
+      const hppBottlingPerBottle =
+        bottleQty > 0
+          ? totalBottlingCost /
+            bottleQty
+          : 0;
+
+      const safeHppBottling =
+        Number.isFinite(
+          hppBottlingPerBottle
+        )
+          ? hppBottlingPerBottle
+          : 0;
+
+      /*
+       * Create header in non-final status.
+       */
+      botNumber =
+        await generateOrderNumber(
+          'BOT',
+          'BottlingOrder'
+        );
+
+      order =
+        await base44.entities.BottlingOrder.create({
+          bottling_number:
+            botNumber,
+          production_id: '',
+          batch_number:
+            form.batch_number,
+          bottling_date:
+            form.bottling_date,
+          operator:
+            form.operator,
+          total_bulk_processed:
+            totalVolume,
+          total_output:
+            totalVolume,
+          waste: 0,
+          remaining_bulk:
+            exactBulkAvailable -
+            totalVolume,
+          status:
+            'sedang_diproses',
+          notes:
+            form.notes,
+        });
+
+      /*
+       * 1) Consume BULK SOURCE using exact current identity.
+       */
+      await recordStockMovement({
+        item_type:
+          'product',
+        item_id:
+          sourceProduct.id,
+        item_name:
+          sourceProduct.name ||
+          form.source_product_name,
+        item_code:
+          sourceProduct.code ||
+          '',
+        batch_id:
+          exactBulkBalance.batch_id ||
+          form.batch_id,
+        batch_number:
+          exactBulkBalance.batch_number ||
+          form.batch_number,
+        warehouse_id:
+          exactBulkBalance.warehouse_id ||
+          '',
+        warehouse_name:
+          exactBulkBalance.warehouse_name ||
+          '',
+        inventory_status:
+          exactBulkBalance.inventory_status ||
+          'BULK',
+        quantity_out:
+          totalVolume,
+        unit:
+          'mililiter',
+        unit_cost:
+          hppBulkPerMl,
+        transaction_type:
+          'bottling_consumption',
+        transaction_number:
+          botNumber,
+        reference_type:
+          'bottling',
+        reference_id:
+          order.id,
+        notes:
+          `Bottling ${botNumber}`,
       });
 
       /*
-       * v3.4 — BOTTLING AS SKU GATEWAY
-       *
-       * Consumption tetap mengambil identitas PRODUCT SUMBER BULK.
-       * Output memakai PRODUCT JADI yang dipilih pada Bottling.
-       *
-       * Dengan ini:
-       * BULK parent  -> BOTL SKU 15 ml / 30 ml / dst
-       *
-       * HPP output:
-       * (bulk frozen cost/ml × volume) + bottle HBT
+       * 2) Consume BOTTLE FIFO using real lot identities.
        */
-      const bulkLedgers = await base44.entities.StockLedger.filter({
-        batch_id: form.batch_id,
-        item_id: sourceProduct.id,
-        inventory_status: 'BULK',
-        transaction_type: 'production_output',
-      });
-
-      const latestBulkLedger = [...(bulkLedgers || [])].sort(
-        (a, b) =>
-          new Date(b.transaction_date || b.created_date || 0).getTime() -
-          new Date(a.transaction_date || a.created_date || 0).getTime()
-      )[0];
-
-      const hppBulkPerMl = Number(latestBulkLedger?.unit_cost) || 0;
-      const bottleHbt = Number(bottleMat?.last_purchase_price) || 0;
-      const bottleQty = Number(form.bottle_count);
-
-      const bulkCost = totalVolume * hppBulkPerMl;
-      const bottleCost = bottleQty * bottleHbt;
-      const totalBottlingCost = bulkCost + bottleCost;
-      const hppBottlingPerBottle =
-        bottleQty > 0 ? totalBottlingCost / bottleQty : 0;
-
-      const safeHppBottling =
-        Number.isFinite(hppBottlingPerBottle) ? hppBottlingPerBottle : 0;
-
-      // 1) Consume BULK SOURCE using the selected StockBalance identity
-      await recordStockMovement({
-        item_type: 'product',
-        item_id: sourceProduct.id,
-        item_name: sourceProduct.name || form.source_product_name,
-        item_code: sourceProduct.code || '',
-        batch_id:
-          selectedBulkBalance?.batch_id ||
-          form.batch_id,
-        batch_number:
-          selectedBulkBalance?.batch_number ||
-          form.batch_number,
-        warehouse_id:
-          selectedBulkBalance?.warehouse_id ||
-          '',
-        warehouse_name:
-          selectedBulkBalance?.warehouse_name ||
-          '',
-        inventory_status:
-          selectedBulkBalance?.inventory_status ||
-          'BULK',
-        quantity_out: totalVolume,
-        unit: 'mililiter',
-        unit_cost: hppBulkPerMl,
-        transaction_type: 'bottling_consumption',
-        transaction_number: botNumber,
-        reference_type: 'bottling',
-        reference_id: order.id,
-        notes: `Bottling ${botNumber}`,
-      });
-
-      // 2) Consume BOTTLE FIFO using each real StockBalance identity
-      let remainingBottleQty = bottleQty;
+      let remainingBottleQty =
+        bottleQty;
 
       for (const lot of bottleLots) {
-        if (remainingBottleQty <= 0) break;
+        if (
+          remainingBottleQty <= 0
+        ) {
+          break;
+        }
 
         const available =
           Number(
             lot.available_quantity ??
-            lot.quantity ??
-            0
+              lot.quantity ??
+              0
           );
 
         const take =
@@ -460,24 +583,37 @@ export default function Bottling() {
           );
 
         await recordStockMovement({
-          item_type: bottleItemType,
-          item_id: bottleMat.id,
-          item_name: bottleMat.name,
-          item_code: bottleMat.code || '',
+          item_type:
+            bottleItemType,
+          item_id:
+            bottleMat.id,
+          item_name:
+            bottleMat.name,
+          item_code:
+            bottleMat.code ||
+            '',
           batch_id:
-            lot.batch_id || '',
+            lot.batch_id ||
+            '',
           batch_number:
-            lot.batch_number || '',
+            lot.batch_number ||
+            '',
           warehouse_id:
-            lot.warehouse_id || '',
+            lot.warehouse_id ||
+            '',
           warehouse_name:
-            lot.warehouse_name || '',
+            lot.warehouse_name ||
+            '',
           inventory_status:
-            lot.inventory_status || '',
-          quantity_out: take,
+            lot.inventory_status ||
+            '',
+          quantity_out:
+            take,
           unit:
-            bottleMat.unit || 'unit',
-          unit_cost: bottleHbt,
+            bottleMat.unit ||
+            'unit',
+          unit_cost:
+            bottleHbt,
           transaction_type:
             'bottling_bottle_consumption',
           transaction_number:
@@ -490,60 +626,427 @@ export default function Bottling() {
             `Botol untuk ${botNumber}`,
         });
 
-        remainingBottleQty -= take;
+        remainingBottleQty -=
+          take;
       }
 
-      // 3) Create BOTTLING OUTPUT as selected FINAL SKU
+      if (
+        remainingBottleQty > 0
+      ) {
+        throw new Error(
+          `Konsumsi botol tidak lengkap. Sisa ${remainingBottleQty} botol belum terpotong.`
+        );
+      }
+
+      /*
+       * 3) Create READY_FOR_LABELING output stock.
+       */
       await recordStockMovement({
-        item_type: 'product',
-        item_id: outputProduct.id,
-        item_name: outputProduct.name,
-        item_code: outputProduct.code || '',
-        batch_id: form.batch_id,
-        batch_number: form.batch_number,
-        inventory_status: 'READY_FOR_LABELING',
-        quantity_in: bottleQty,
-        unit: 'unit',
-        unit_cost: safeHppBottling,
-        transaction_type: 'bottling_output',
-        transaction_number: botNumber,
-        reference_type: 'bottling',
-        reference_id: order.id,
-        notes: `Output bottling ${botNumber} · source ${sourceProduct.name || form.source_product_name}`,
+        item_type:
+          'product',
+        item_id:
+          outputProduct.id,
+        item_name:
+          outputProduct.name,
+        item_code:
+          outputProduct.code ||
+          '',
+        batch_id:
+          exactBulkBalance.batch_id ||
+          form.batch_id,
+        batch_number:
+          exactBulkBalance.batch_number ||
+          form.batch_number,
+        warehouse_id:
+          exactBulkBalance.warehouse_id ||
+          '',
+        warehouse_name:
+          exactBulkBalance.warehouse_name ||
+          '',
+        inventory_status:
+          'READY_FOR_LABELING',
+        quantity_in:
+          bottleQty,
+        unit:
+          'unit',
+        unit_cost:
+          safeHppBottling,
+        transaction_type:
+          'bottling_output',
+        transaction_number:
+          botNumber,
+        reference_type:
+          'bottling',
+        reference_id:
+          order.id,
+        notes:
+          `Output bottling ${botNumber} · source ${sourceProduct.name || form.source_product_name}`,
       });
 
-      await createAuditLog({
-        module: 'Bottling',
-        action: 'Selesai',
-        entity_type: 'BottlingOrder',
-        entity_id: order.id,
-        reference_number: botNumber,
-        data_after: {
-          source_product_id: sourceProduct.id,
-          source_product_name: sourceProduct.name,
-          output_product_id: outputProduct.id,
-          output_product_name: outputProduct.name,
-          batch_number: form.batch_number,
-          bottle_size: Number(form.volume_per_bottle),
-          bottle_count: bottleQty,
-          hpp_bulk_per_ml: hppBulkPerMl,
-          hpp_bottling_per_bottle: safeHppBottling,
-        },
-      });
+      /*
+       * 4) Persist BottlingOutput only after stock movements succeeded.
+       */
+      createdOutputRow =
+        await base44.entities.BottlingOutput.create({
+          bottling_id:
+            order.id,
+          product_id:
+            outputProduct.id,
+          product_name:
+            outputProduct.name,
+          bottle_size:
+            Number(
+              form.volume_per_bottle
+            ),
+          bottle_count:
+            bottleQty,
+          volume_per_bottle:
+            Number(
+              form.volume_per_bottle
+            ),
+          total_volume:
+            totalVolume,
+          bottle_item_id:
+            bottleMat.id,
+          bottle_item_code:
+            bottleMat.code ||
+            '',
+          bottle_item_name:
+            bottleMat.name,
+          bottle_stock_used:
+            bottleQty,
+          output_status:
+            'siap_labeling',
+        });
+
+      /*
+       * 5) Finalize header LAST.
+       */
+      await base44.entities.BottlingOrder.update(
+        order.id,
+        {
+          status:
+            'siap_labeling',
+          remaining_bulk:
+            exactBulkAvailable -
+            totalVolume
+        }
+      );
+
+      /*
+       * Audit is non-fatal. Operational transaction is already complete.
+       */
+      try {
+        await createAuditLog({
+          module:
+            'Bottling',
+          action:
+            'Selesai',
+          entity_type:
+            'BottlingOrder',
+          entity_id:
+            order.id,
+          reference_number:
+            botNumber,
+          data_after: {
+            source_product_id:
+              sourceProduct.id,
+            source_product_name:
+              sourceProduct.name,
+            output_product_id:
+              outputProduct.id,
+            output_product_name:
+              outputProduct.name,
+            batch_number:
+              form.batch_number,
+            bottle_size:
+              Number(
+                form.volume_per_bottle
+              ),
+            bottle_count:
+              bottleQty,
+            hpp_bulk_per_ml:
+              hppBulkPerMl,
+            hpp_bottling_per_bottle:
+              safeHppBottling,
+          },
+        });
+      } catch {
+        // Audit failure tidak boleh mengubah transaksi stok yang sudah valid.
+      }
 
       toast({
-        title: 'Bottling selesai',
-        description: `${botNumber} · Output: ${outputProduct.name}`,
+        title:
+          'Bottling selesai',
+        description:
+          `${botNumber} · Output: ${outputProduct.name}`,
       });
 
       openAdd();
-      loadData();
+      await loadData();
+
     } catch (e) {
+      /*
+       * ========================================================
+       * AUTO ROLLBACK
+       * ========================================================
+       *
+       * Hanya reversal movement dengan reference_id = order.id.
+       * Reversal memakai identity dan frozen unit_cost dari
+       * StockLedger asli, sehingga net stock kembali seperti semula.
+       */
+      let rollbackOk = true;
+      const rollbackErrors = [];
+
+      if (order?.id) {
+        try {
+          const referenceRows =
+            await base44.entities.StockLedger.filter({
+              reference_type:
+                'bottling',
+              reference_id:
+                order.id
+            });
+
+          const numberRows =
+            botNumber
+              ? await base44.entities.StockLedger.filter({
+                  transaction_number:
+                    botNumber
+                })
+              : [];
+
+          const reversibleTypes = [
+            'bottling_consumption',
+            'bottling_bottle_consumption',
+            'bottling_output'
+          ];
+
+          const rowsToReverse =
+            Array.from(
+              new Map(
+                [
+                  ...(referenceRows || []),
+                  ...(numberRows || [])
+                ].map(
+                  row => [row.id, row]
+                )
+              ).values()
+            )
+              .filter(
+                row =>
+                  reversibleTypes.includes(
+                    row.transaction_type
+                  )
+              )
+              .sort((a, b) => {
+                const da =
+                  new Date(
+                    a.created_date ||
+                    a.transaction_date ||
+                    0
+                  ).getTime();
+
+                const db =
+                  new Date(
+                    b.created_date ||
+                    b.transaction_date ||
+                    0
+                  ).getTime();
+
+                return db - da;
+              });
+
+          for (
+            const row of
+            rowsToReverse
+          ) {
+            try {
+              await recordStockMovement({
+                item_type:
+                  row.item_type,
+                item_id:
+                  row.item_id,
+                item_code:
+                  row.item_code ||
+                  '',
+                item_name:
+                  row.item_name ||
+                  '',
+                batch_id:
+                  row.batch_id ||
+                  '',
+                batch_number:
+                  row.batch_number ||
+                  '',
+                warehouse_id:
+                  row.warehouse_id ||
+                  '',
+                warehouse_name:
+                  row.warehouse_name ||
+                  '',
+                inventory_status:
+                  row.inventory_status ||
+                  '',
+                quantity_in:
+                  Number(
+                    row.quantity_out ||
+                    0
+                  ),
+                quantity_out:
+                  Number(
+                    row.quantity_in ||
+                    0
+                  ),
+                unit:
+                  row.unit ||
+                  '',
+                unit_cost:
+                  Number(
+                    row.unit_cost ||
+                    0
+                  ),
+                transaction_type:
+                  'bottling_auto_reversal',
+                transaction_number:
+                  `ROLLBACK-${botNumber}`,
+                reference_type:
+                  'bottling',
+                reference_id:
+                  order.id,
+                notes:
+                  `AUTO ROLLBACK Bottling · ${row.transaction_type} · ${botNumber}`
+              });
+            } catch (
+              rollbackMovementError
+            ) {
+              rollbackOk = false;
+              rollbackErrors.push(
+                rollbackMovementError?.message ||
+                'Gagal reversal movement'
+              );
+            }
+          }
+
+          /*
+           * Hapus BottlingOutput orphan bila sempat dibuat.
+           */
+          if (
+            createdOutputRow?.id
+          ) {
+            try {
+              await base44.entities.BottlingOutput.delete(
+                createdOutputRow.id
+              );
+
+              createdOutputRow =
+                null;
+            } catch (
+              outputDeleteError
+            ) {
+              rollbackOk = false;
+              rollbackErrors.push(
+                outputDeleteError?.message ||
+                'Gagal menghapus BottlingOutput orphan'
+              );
+            }
+          }
+
+          /*
+           * Failed order tetap disimpan untuk traceability,
+           * tetapi tidak boleh berstatus siap_labeling.
+           */
+          try {
+            await base44.entities.BottlingOrder.update(
+              order.id,
+              {
+                status:
+                  rollbackOk
+                    ? 'dibatalkan'
+                    : 'rollback_gagal',
+                total_output: 0,
+                total_bulk_processed: 0,
+                remaining_bulk:
+                  exactBulkAvailable ?? Number(form.available_bulk || 0),
+                notes:
+                  [
+                    form.notes,
+                    `AUTO ROLLBACK: ${e?.message || 'Bottling gagal'}`
+                  ]
+                    .filter(Boolean)
+                    .join('\n')
+              }
+            );
+          } catch (
+            orderResetError
+          ) {
+            rollbackOk = false;
+            rollbackErrors.push(
+              orderResetError?.message ||
+              'Gagal menandai BottlingOrder hasil rollback'
+            );
+          }
+
+          try {
+            await createAuditLog({
+              module:
+                'Bottling',
+              action:
+                rollbackOk
+                  ? 'Auto Rollback'
+                  : 'Auto Rollback Partial',
+              entity_type:
+                'BottlingOrder',
+              entity_id:
+                order.id,
+              reference_number:
+                botNumber,
+              reason:
+                e?.message ||
+                'Bottling posting failed',
+              data_after: {
+                rollback_ok:
+                  rollbackOk,
+                rollback_errors:
+                  rollbackErrors
+              }
+            });
+          } catch {
+            // Audit failure tidak boleh menggagalkan rollback stok.
+          }
+
+        } catch (
+          rollbackFatalError
+        ) {
+          rollbackOk = false;
+          rollbackErrors.push(
+            rollbackFatalError?.message ||
+            'Rollback fatal error'
+          );
+        }
+      }
+
       toast({
-        variant: 'destructive',
-        title: 'Gagal menyimpan',
-        description: e.message,
+        variant:
+          'destructive',
+        title:
+          rollbackOk
+            ? 'Bottling gagal · stok dikembalikan'
+            : 'Bottling gagal · rollback perlu diperiksa',
+        description:
+          rollbackOk
+            ? (
+                `${e?.message || 'Terjadi kesalahan'} · ` +
+                'Tidak ada perubahan stok bersih.'
+              )
+            : (
+                `${e?.message || 'Terjadi kesalahan'} · ` +
+                `Rollback tidak lengkap: ${rollbackErrors.join('; ')}`
+              )
       });
+
+      await loadData();
+
     } finally {
       setSubmitting(false);
     }
