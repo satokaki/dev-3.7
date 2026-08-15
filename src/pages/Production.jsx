@@ -9,7 +9,7 @@ import StatusBadge from '@/components/StatusBadge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Plus, Play, CheckCircle, AlertTriangle, RefreshCw, RotateCcw, X } from 'lucide-react';
+import { Plus, Play, CheckCircle, AlertTriangle, RefreshCw, RotateCcw, X, ChevronDown, ChevronUp } from 'lucide-react';
 import { calculateRecipe } from '@/lib/recipeCalculator';
 import { calculatePremixQuantities } from '@/lib/premix';
 import { generateProductionNumber, generateBatchNumber } from '@/lib/sequence';
@@ -96,6 +96,7 @@ export default function Production() {
   // READ ONLY: Recipe + RecipeIngredient + StockBalance.
   const [productionReadiness, setProductionReadiness] = useState([]);
   const [readinessLoading, setReadinessLoading] = useState(false);
+  const [readinessExpanded, setReadinessExpanded] = useState(false);
 
   const [form, setForm] = useState({
     recipe_id: '',
@@ -2354,116 +2355,95 @@ export default function Production() {
       </div>
 
       <div className="border rounded-lg bg-white mb-4 overflow-hidden">
-        <div className="px-4 py-3 border-b flex items-center justify-between gap-3">
-          <div>
-            <div className="font-semibold text-[14px]">Kesiapan Produksi</div>
-            <div className="text-[11px] text-muted-foreground">
-              Dihitung dari Recipe approved dan stok bahan aktual. Klik resep untuk masuk ke form produksi.
+        <div className={`px-4 py-3 flex items-center justify-between gap-3 ${readinessExpanded ? 'border-b' : ''}`}>
+          <button
+            type="button"
+            onClick={() => setReadinessExpanded(v => !v)}
+            className="flex-1 flex items-center justify-between gap-3 text-left"
+            aria-expanded={readinessExpanded}
+          >
+            <div>
+              <div className="font-semibold text-[14px]">Kesiapan Produksi</div>
+              <div className="text-[11px] text-muted-foreground">
+                {productionReadiness.filter(x => x.ready).length} produk siap diproduksi. Buka untuk melihat daftar.
+              </div>
             </div>
-          </div>
+            {readinessExpanded
+              ? <ChevronUp className="w-4 h-4 text-muted-foreground shrink-0" />
+              : <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />}
+          </button>
 
           <Button
             type="button"
             variant="outline"
             size="sm"
-            className="gap-1.5"
+            className="gap-1.5 shrink-0"
             disabled={readinessLoading}
-            onClick={buildProductionReadiness}
+            onClick={e => {
+              e.stopPropagation();
+              buildProductionReadiness();
+            }}
           >
             <RefreshCw className={`w-3.5 h-3.5 ${readinessLoading ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
         </div>
 
-        <div className="overflow-x-auto max-h-[340px]">
-          <table className="w-full text-[12px]">
-            <thead className="bg-muted/40 text-muted-foreground sticky top-0">
-              <tr>
-                <th className="px-3 py-2 text-left">Produk / Resep</th>
-                <th className="px-3 py-2 text-left">Merk</th>
-                <th className="px-3 py-2 text-right">Target Standar</th>
-                <th className="px-3 py-2 text-left">Essence</th>
-                <th className="px-3 py-2 text-left">Kesiapan Total</th>
-              </tr>
-            </thead>
+        {readinessExpanded && (
+          <div className="overflow-x-auto max-h-[340px]">
+            <table className="w-full text-[12px]">
+              <thead className="bg-muted/40 text-muted-foreground sticky top-0">
+                <tr>
+                  <th className="px-3 py-2 text-left">Produk</th>
+                  <th className="px-3 py-2 text-left">Merk</th>
+                  <th className="px-3 py-2 text-right">Target</th>
+                  <th className="px-3 py-2 text-left">Essence</th>
+                  <th className="px-3 py-2 text-left">Status</th>
+                </tr>
+              </thead>
 
-            <tbody>
-              {productionReadiness.map(row => (
-                <tr
-                  key={row.recipe.id}
-                  onClick={() => {
-                    setForm(f => ({
-                      ...f,
-                      recipe_id: row.recipe.id,
-                      target_volume: row.target
-                    }));
-                  }}
-                  className="border-t cursor-pointer hover:bg-muted/30"
-                >
-                  <td className="px-3 py-2">
-                    <div className="font-medium">
-                      {row.recipe.product_name || row.recipe.output_material_name || row.recipe.name || '—'}
-                    </div>
-                    <div className="text-[10.5px] text-muted-foreground font-mono">
-                      {row.recipe.code || '—'} · {row.recipe.name || ''}
-                    </div>
-                  </td>
-
-                  <td className="px-3 py-2">
-                    {row.recipe.brand_name || '—'}
-                  </td>
-
-                  <td className="px-3 py-2 text-right tabular-nums">
-                    {formatNumber(row.target)} {row.targetUnit}
-                  </td>
-
-                  <td className="px-3 py-2">
-                    {row.essenceReady ? (
+              <tbody>
+                {productionReadiness.filter(row => row.ready).map(row => (
+                  <tr
+                    key={row.recipe.id}
+                    onClick={() => {
+                      setForm(f => ({
+                        ...f,
+                        recipe_id: row.recipe.id,
+                        target_volume: row.target
+                      }));
+                    }}
+                    className="border-t cursor-pointer hover:bg-muted/30"
+                  >
+                    <td className="px-3 py-2 font-medium">
+                      {row.recipe.product_name || row.recipe.output_material_name || 'Produk'}
+                    </td>
+                    <td className="px-3 py-2">{row.recipe.brand_name || '—'}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {formatNumber(row.target)} {row.targetUnit}
+                    </td>
+                    <td className="px-3 py-2">
                       <span className="text-emerald-600 font-semibold">✓ Cukup</span>
-                    ) : (
-                      <div className="text-amber-700">
-                        <div className="font-semibold flex items-center gap-1">
-                          <AlertTriangle className="w-3 h-3" /> Kurang
-                        </div>
-                        <div className="text-[10px]">
-                          {row.essenceInsufficient
-                            .slice(0, 2)
-                            .map(x => `${x.material_name} -${x.shortage.toFixed(1)}g`)
-                            .join(', ')}
-                        </div>
-                      </div>
-                    )}
-                  </td>
-
-                  <td className="px-3 py-2">
-                    {row.ready ? (
+                    </td>
+                    <td className="px-3 py-2">
                       <span className="inline-flex px-2 py-1 rounded bg-emerald-100 text-emerald-700 font-semibold text-[11px]">
                         SIAP PRODUKSI
                       </span>
-                    ) : (
-                      <div>
-                        <span className="inline-flex px-2 py-1 rounded bg-amber-100 text-amber-700 font-semibold text-[11px]">
-                          BAHAN KURANG
-                        </span>
-                        <div className="text-[10px] text-muted-foreground mt-1">
-                          {row.insufficient.length} dari {row.totalMaterials} bahan belum cukup
-                        </div>
-                      </div>
-                    )}
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                  </tr>
+                ))}
 
-              {!readinessLoading && productionReadiness.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="px-3 py-8 text-center text-muted-foreground">
-                    Belum ada resep approved yang dapat ditampilkan.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+                {!readinessLoading && productionReadiness.filter(row => row.ready).length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="px-3 py-8 text-center text-muted-foreground">
+                      Belum ada produk yang siap diproduksi.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       <div className="border rounded-lg bg-white p-4 mb-5">
@@ -2567,11 +2547,6 @@ export default function Production() {
               <div className="bg-muted/40 rounded px-2 py-1.5">
                 Target: <b>{formatNumber(form.target_volume)} {targetUnit}</b>
               </div>
-              {!formulaHidden && (
-                <div className="bg-muted/40 rounded px-2 py-1.5">
-                  Formula: <b>{totalFormulaPct.toFixed(2)}%</b>
-                </div>
-              )}
               <div className="bg-muted/40 rounded px-2 py-1.5">
                 Kebutuhan: <b>{formatNumber(totalRequirement, 2)} gram</b>
               </div>
@@ -2588,7 +2563,6 @@ export default function Production() {
                 <thead>
                   <tr className="bg-muted/40 text-muted-foreground">
                     <th className="px-2 py-1 text-left">Bahan</th>
-                    {!formulaHidden && <th className="px-2 py-1 text-right">%</th>}
                     <th className="px-2 py-1 text-right">Butuh (g)</th>
                     <th className="px-2 py-1 text-right">Stok (g)</th>
                     <th className="px-2 py-1 text-center">Status</th>
@@ -2598,11 +2572,6 @@ export default function Production() {
                   {stockCheck.map((item, i) => (
                     <tr key={i} className="border-b border-border/30">
                       <td className="px-2 py-1">{item.material_name}</td>
-                      {!formulaHidden && (
-                        <td className="px-2 py-1 text-right tabular-nums">
-                          {Number(item.percentage || 0).toFixed(2)}%
-                        </td>
-                      )}
                       <td className="px-2 py-1 text-right tabular-nums">
                         {Number(item.gram || 0).toFixed(2)}
                       </td>
