@@ -198,14 +198,13 @@ export default function Excise() {
       return;
     }
 
-    if (
-      Number(form.quantity) >
-      Number(stockItem.available_quantity)
-    ) {
+    const quantityProcessed =
+      Number(form.quantity) || 0;
+
+    if (quantityProcessed <= 0) {
       toast({
         variant: 'destructive',
-        title: 'Jumlah melebihi stok belum cukai',
-        description: `Tersedia: ${stockItem.available_quantity}`,
+        title: 'Jumlah harus lebih dari 0'
       });
       return;
     }
@@ -226,40 +225,12 @@ export default function Excise() {
       return;
     }
 
-    if (form.excise_material_id) {
-      const stk =
-        exciseStocks[form.excise_material_id] || 0;
-
-      if (exciseTotalRequired > stk) {
-        toast({
-          variant: 'destructive',
-          title: 'Stok pita cukai tidak cukup',
-          description:
-            `Butuh ${exciseTotalRequired}, stok ${stk}`,
-        });
-        return;
-      }
-    }
-
-    if (
-      form.use_box &&
-      form.box_material_id
-    ) {
-      const stk =
-        exciseStocks[form.box_material_id] || 0;
-
-      if (boxTotalRequired > stk) {
-        toast({
-          variant: 'destructive',
-          title: 'Stok box tidak cukup',
-          description:
-            `Butuh ${boxTotalRequired}, stok ${stk}`,
-        });
-        return;
-      }
-    }
-
     setSubmitting(true);
+
+    let excise = null;
+    let excNumber = '';
+    let sourceBalance = null;
+    let sourceAvailableBefore = 0;
 
     try {
       const product =
@@ -283,12 +254,193 @@ export default function Excise() {
       const brand =
         brands.find(b => b.id === product.brand_id);
 
-      const excNumber =
-        await generateOrderNumber(
-          'EXC',
-          'ExciseOrder'
+      /*
+       * ========================================================
+       * v3.7 EXCISE ATOMIC POSTING
+       * ========================================================
+       *
+       * Preflight seluruh stok dilakukan sebelum movement pertama.
+       * Semua konsumsi memakai StockBalance identity aktual.
+       * Jika salah satu langkah gagal setelah movement dimulai,
+       * seluruh movement pada ExciseOrder tersebut dibalik otomatis.
+       */
+
+      /*
+       * 0A. PREFLIGHT SOURCE UNEXCISED
+       */
+      const sourceRows =
+        await base44.entities.StockBalance.filter({
+          item_id: stockItem.item_id,
+          item_type: 'product',
+          inventory_status: 'UNEXCISED'
+        });
+
+      sourceBalance =
+        (sourceRows || []).find(
+          row => row.id === stockItem.id
+        ) ||
+        (sourceRows || []).find(
+          row =>
+            (row.batch_id || '') === (stockItem.batch_id || '') &&
+            (row.warehouse_id || '') === (stockItem.warehouse_id || '') &&
+            (row.inventory_status || '') === 'UNEXCISED'
+        ) ||
+        null;
+
+      sourceAvailableBefore =
+        Number(
+          sourceBalance?.available_quantity ??
+          sourceBalance?.quantity ??
+          0
         );
 
+      if (
+        !sourceBalance ||
+        sourceAvailableBefore < quantityProcessed
+      ) {
+        throw new Error(
+          `Preflight stok UNEXCISED gagal. Tersedia ${sourceAvailableBefore}, dibutuhkan ${quantityProcessed}.`
+        );
+      }
+
+      /*
+       * 0B. PREFLIGHT PITA CUKAI
+       */
+      let exciseMat = null;
+      let exciseLots = [];
+      let exactExciseStock = 0;
+
+      if (form.excise_material_id) {
+        exciseMat =
+          exciseMaterials.find(
+            m => m.id === form.excise_material_id
+          );
+
+        if (!exciseMat) {
+          throw new Error(
+            'Material pita cukai tidak ditemukan'
+          );
+        }
+
+        const exciseBalanceRows =
+          await base44.entities.StockBalance.filter({
+            item_id: form.excise_material_id,
+            item_type: 'material'
+          });
+
+        exciseLots =
+          (exciseBalanceRows || [])
+            .filter(
+              row =>
+                Number(
+                  row.available_quantity ??
+                  row.quantity ??
+                  0
+                ) > 0
+            )
+            .sort((a, b) => {
+              const da =
+                a.created_date ||
+                a.updated_date ||
+                '';
+              const db =
+                b.created_date ||
+                b.updated_date ||
+                '';
+              return da.localeCompare(db);
+            });
+
+        exactExciseStock =
+          exciseLots.reduce(
+            (sum, row) =>
+              sum +
+              Number(
+                row.available_quantity ??
+                row.quantity ??
+                0
+              ),
+            0
+          );
+
+        if (exciseTotalRequired > exactExciseStock) {
+          throw new Error(
+            `Preflight pita cukai gagal. Butuh ${exciseTotalRequired}, stok aktual ${exactExciseStock}.`
+          );
+        }
+      }
+
+      /*
+       * 0C. PREFLIGHT BOX
+       */
+      let boxMat = null;
+      let boxLots = [];
+      let exactBoxStock = 0;
+
+      if (
+        form.use_box &&
+        form.box_material_id
+      ) {
+        boxMat =
+          boxMaterials.find(
+            m => m.id === form.box_material_id
+          );
+
+        if (!boxMat) {
+          throw new Error(
+            'Material box tidak ditemukan'
+          );
+        }
+
+        const boxBalanceRows =
+          await base44.entities.StockBalance.filter({
+            item_id: form.box_material_id,
+            item_type: 'material'
+          });
+
+        boxLots =
+          (boxBalanceRows || [])
+            .filter(
+              row =>
+                Number(
+                  row.available_quantity ??
+                  row.quantity ??
+                  0
+                ) > 0
+            )
+            .sort((a, b) => {
+              const da =
+                a.created_date ||
+                a.updated_date ||
+                '';
+              const db =
+                b.created_date ||
+                b.updated_date ||
+                '';
+              return da.localeCompare(db);
+            });
+
+        exactBoxStock =
+          boxLots.reduce(
+            (sum, row) =>
+              sum +
+              Number(
+                row.available_quantity ??
+                row.quantity ??
+                0
+              ),
+            0
+          );
+
+        if (boxTotalRequired > exactBoxStock) {
+          throw new Error(
+            `Preflight box gagal. Butuh ${boxTotalRequired}, stok aktual ${exactBoxStock}.`
+          );
+        }
+      }
+
+      /*
+       * 0D. HPP SOURCE — frozen dari labeling_output
+       */
       const labelingLedgers =
         await base44.entities.StockLedger.filter({
           batch_id: stockItem.batch_id || '',
@@ -297,8 +449,23 @@ export default function Excise() {
           transaction_type: 'labeling_output',
         });
 
+      const latestLabelingLedger =
+        [...(labelingLedgers || [])].sort(
+          (a, b) =>
+            new Date(
+              b.transaction_date ||
+              b.created_date ||
+              0
+            ).getTime() -
+            new Date(
+              a.transaction_date ||
+              a.created_date ||
+              0
+            ).getTime()
+        )[0];
+
       const hppLabelingPerBottle =
-        Number(labelingLedgers[0]?.unit_cost) || 0;
+        Number(latestLabelingLedger?.unit_cost) || 0;
 
       if (
         !labelingLedgers.length ||
@@ -309,7 +476,16 @@ export default function Excise() {
         );
       }
 
-      const excise =
+      /*
+       * 1. CREATE HEADER — BELUM FINAL
+       */
+      excNumber =
+        await generateOrderNumber(
+          'EXC',
+          'ExciseOrder'
+        );
+
+      excise =
         await base44.entities.ExciseOrder.create({
           excise_number: excNumber,
           brand_id: product.brand_id || '',
@@ -327,7 +503,7 @@ export default function Excise() {
               form.bottle_size
             ),
           quantity:
-            Number(form.quantity),
+            quantityProcessed,
           excise_label_type:
             form.excise_label_type,
           document_number:
@@ -371,13 +547,10 @@ export default function Excise() {
           operator:
             form.operator,
           status:
-            'siap_jual',
+            'sedang_diproses',
           notes:
             form.notes,
         });
-
-      const quantityProcessed =
-        Number(form.quantity);
 
       const previousProductCost =
         quantityProcessed *
@@ -386,14 +559,31 @@ export default function Excise() {
       let exciseCost = 0;
       let packagingCost = 0;
 
+      /*
+       * 2. CONSUME UNEXCISED — exact source identity
+       */
       await recordStockMovement({
         item_type: 'product',
         item_id: product.id,
         item_name: product.name || '',
         item_code: product.code || '',
-        batch_id: stockItem.batch_id || '',
-        batch_number: stockItem.batch_number || '',
-        inventory_status: 'UNEXCISED',
+        batch_id:
+          sourceBalance.batch_id ||
+          stockItem.batch_id ||
+          '',
+        batch_number:
+          sourceBalance.batch_number ||
+          stockItem.batch_number ||
+          '',
+        warehouse_id:
+          sourceBalance.warehouse_id ||
+          '',
+        warehouse_name:
+          sourceBalance.warehouse_name ||
+          '',
+        inventory_status:
+          sourceBalance.inventory_status ||
+          'UNEXCISED',
         quantity_out: quantityProcessed,
         unit: 'unit',
         unit_cost: hppLabelingPerBottle,
@@ -404,60 +594,89 @@ export default function Excise() {
         notes: `Proses cukai ${excNumber}`,
       });
 
+      /*
+       * 3. CONSUME PITA CUKAI FIFO
+       */
       if (form.excise_material_id) {
-        const mat =
-          exciseMaterials.find(
-            m =>
-              m.id ===
-              form.excise_material_id
-          );
-
         const exciseHbt =
-          Number(mat?.last_purchase_price) || 0;
+          Number(exciseMat?.last_purchase_price) || 0;
 
         exciseCost =
           exciseTotalRequired *
           exciseHbt;
 
-        await recordStockMovement({
-          item_type: 'material',
-          item_id:
-            form.excise_material_id,
-          item_name:
-            form.excise_material_name,
-          item_code:
-            mat?.code || '',
-          inventory_status: '',
-          quantity_out:
-            exciseTotalRequired,
-          unit:
-            mat?.unit || 'unit',
-          unit_cost:
-            exciseHbt,
-          transaction_type:
-            'excise_consumption',
-          transaction_number:
-            excNumber,
-          reference_type:
-            'excise',
-          reference_id:
-            excise.id,
-          notes:
-            `Pita cukai untuk ${excNumber}`,
-        });
+        let remainingExciseQty =
+          exciseTotalRequired;
+
+        for (const lot of exciseLots) {
+          if (remainingExciseQty <= 0) break;
+
+          const available =
+            Number(
+              lot.available_quantity ??
+              lot.quantity ??
+              0
+            );
+
+          const take =
+            Math.min(
+              remainingExciseQty,
+              available
+            );
+
+          await recordStockMovement({
+            item_type: 'material',
+            item_id:
+              form.excise_material_id,
+            item_name:
+              form.excise_material_name,
+            item_code:
+              exciseMat?.code || '',
+            batch_id:
+              lot.batch_id || '',
+            batch_number:
+              lot.batch_number || '',
+            warehouse_id:
+              lot.warehouse_id || '',
+            warehouse_name:
+              lot.warehouse_name || '',
+            inventory_status:
+              lot.inventory_status || '',
+            quantity_out:
+              take,
+            unit:
+              exciseMat?.unit || 'unit',
+            unit_cost:
+              exciseHbt,
+            transaction_type:
+              'excise_consumption',
+            transaction_number:
+              excNumber,
+            reference_type:
+              'excise',
+            reference_id:
+              excise.id,
+            notes:
+              `Pita cukai untuk ${excNumber}`,
+          });
+
+          remainingExciseQty -= take;
+        }
+
+        if (remainingExciseQty > 0) {
+          throw new Error(
+            `Konsumsi pita cukai tidak lengkap. Sisa ${remainingExciseQty} belum terpotong.`
+          );
+        }
       }
 
+      /*
+       * 4. CONSUME BOX FIFO
+       */
       if (
         form.use_box &&
         form.box_material_id
       ) {
-        const boxMat =
-          boxMaterials.find(
-            m =>
-              m.id ===
-              form.box_material_id
-          );
-
         const packagingHbt =
           Number(boxMat?.last_purchase_price) || 0;
 
@@ -465,34 +684,74 @@ export default function Excise() {
           boxTotalRequired *
           packagingHbt;
 
-        await recordStockMovement({
-          item_type: 'material',
-          item_id:
-            form.box_material_id,
-          item_name:
-            form.box_material_name,
-          item_code:
-            boxMat?.code || '',
-          inventory_status: '',
-          quantity_out:
-            boxTotalRequired,
-          unit:
-            boxMat?.unit || 'pcs',
-          unit_cost:
-            packagingHbt,
-          transaction_type:
-            'excise_consumption',
-          transaction_number:
-            excNumber,
-          reference_type:
-            'excise',
-          reference_id:
-            excise.id,
-          notes:
-            `Box kemasan untuk ${excNumber}`,
-        });
+        let remainingBoxQty =
+          boxTotalRequired;
+
+        for (const lot of boxLots) {
+          if (remainingBoxQty <= 0) break;
+
+          const available =
+            Number(
+              lot.available_quantity ??
+              lot.quantity ??
+              0
+            );
+
+          const take =
+            Math.min(
+              remainingBoxQty,
+              available
+            );
+
+          await recordStockMovement({
+            item_type: 'material',
+            item_id:
+              form.box_material_id,
+            item_name:
+              form.box_material_name,
+            item_code:
+              boxMat?.code || '',
+            batch_id:
+              lot.batch_id || '',
+            batch_number:
+              lot.batch_number || '',
+            warehouse_id:
+              lot.warehouse_id || '',
+            warehouse_name:
+              lot.warehouse_name || '',
+            inventory_status:
+              lot.inventory_status || '',
+            quantity_out:
+              take,
+            unit:
+              boxMat?.unit || 'pcs',
+            unit_cost:
+              packagingHbt,
+            transaction_type:
+              'excise_consumption',
+            transaction_number:
+              excNumber,
+            reference_type:
+              'excise',
+            reference_id:
+              excise.id,
+            notes:
+              `Box kemasan untuk ${excNumber}`,
+          });
+
+          remainingBoxQty -= take;
+        }
+
+        if (remainingBoxQty > 0) {
+          throw new Error(
+            `Konsumsi box tidak lengkap. Sisa ${remainingBoxQty} belum terpotong.`
+          );
+        }
       }
 
+      /*
+       * 5. CREATE READY_FOR_SALE OUTPUT
+       */
       const totalFinalCost =
         previousProductCost +
         exciseCost +
@@ -516,8 +775,20 @@ export default function Excise() {
         item_id: product.id,
         item_name: product.name || '',
         item_code: product.code || '',
-        batch_id: stockItem.batch_id || '',
-        batch_number: stockItem.batch_number || '',
+        batch_id:
+          sourceBalance.batch_id ||
+          stockItem.batch_id ||
+          '',
+        batch_number:
+          sourceBalance.batch_number ||
+          stockItem.batch_number ||
+          '',
+        warehouse_id:
+          sourceBalance.warehouse_id ||
+          '',
+        warehouse_name:
+          sourceBalance.warehouse_name ||
+          '',
         inventory_status: 'READY_FOR_SALE',
         quantity_in: quantityProcessed,
         unit: 'unit',
@@ -529,16 +800,34 @@ export default function Excise() {
         notes: 'Barang siap jual',
       });
 
-      await createAuditLog({
-        module: 'Cukai',
-        action:
-          product.excise_required === false
-            ? 'Selesai Non Cukai'
-            : 'Selesai',
-        entity_type: 'ExciseOrder',
-        entity_id: excise.id,
-        reference_number: excNumber,
-      });
+      /*
+       * 6. FINALIZE HEADER LAST
+       */
+      await base44.entities.ExciseOrder.update(
+        excise.id,
+        {
+          status: 'siap_jual'
+        }
+      );
+
+      /*
+       * Audit dibuat NON-FATAL.
+       * Gagal audit tidak boleh membuat user mengira transaksi stok gagal.
+       */
+      try {
+        await createAuditLog({
+          module: 'Cukai',
+          action:
+            product.excise_required === false
+              ? 'Selesai Non Cukai'
+              : 'Selesai',
+          entity_type: 'ExciseOrder',
+          entity_id: excise.id,
+          reference_number: excNumber,
+        });
+      } catch {
+        // Audit failure tidak membatalkan transaksi stok yang sudah valid.
+      }
 
       toast({
         title:
@@ -550,13 +839,210 @@ export default function Excise() {
       });
 
       setModalOpen(false);
-      loadData();
+      await loadData();
+
     } catch (e) {
+      /*
+       * ========================================================
+       * AUTO ROLLBACK
+       * ========================================================
+       *
+       * Reverse hanya movement milik ExciseOrder attempt ini.
+       * Identity dan unit_cost diambil dari StockLedger asli.
+       */
+      let rollbackOk = true;
+      const rollbackErrors = [];
+
+      if (excise?.id) {
+        try {
+          const referenceRows =
+            await base44.entities.StockLedger.filter({
+              reference_type: 'excise',
+              reference_id: excise.id
+            });
+
+          const numberRows =
+            excNumber
+              ? await base44.entities.StockLedger.filter({
+                  transaction_number: excNumber
+                })
+              : [];
+
+          const reversibleTypes = [
+            'excise_consumption',
+            'excise_output'
+          ];
+
+          const rowsToReverse =
+            Array.from(
+              new Map(
+                [
+                  ...(referenceRows || []),
+                  ...(numberRows || [])
+                ].map(row => [row.id, row])
+              ).values()
+            )
+              .filter(
+                row =>
+                  reversibleTypes.includes(
+                    row.transaction_type
+                  )
+              )
+              .sort((a, b) => {
+                const da =
+                  new Date(
+                    a.created_date ||
+                    a.transaction_date ||
+                    0
+                  ).getTime();
+
+                const db =
+                  new Date(
+                    b.created_date ||
+                    b.transaction_date ||
+                    0
+                  ).getTime();
+
+                return db - da;
+              });
+
+          for (const row of rowsToReverse) {
+            try {
+              await recordStockMovement({
+                item_type:
+                  row.item_type,
+                item_id:
+                  row.item_id,
+                item_code:
+                  row.item_code || '',
+                item_name:
+                  row.item_name || '',
+                batch_id:
+                  row.batch_id || '',
+                batch_number:
+                  row.batch_number || '',
+                warehouse_id:
+                  row.warehouse_id || '',
+                warehouse_name:
+                  row.warehouse_name || '',
+                inventory_status:
+                  row.inventory_status || '',
+                quantity_in:
+                  Number(
+                    row.quantity_out || 0
+                  ),
+                quantity_out:
+                  Number(
+                    row.quantity_in || 0
+                  ),
+                unit:
+                  row.unit || '',
+                unit_cost:
+                  Number(
+                    row.unit_cost || 0
+                  ),
+                transaction_type:
+                  'excise_auto_reversal',
+                transaction_number:
+                  `ROLLBACK-${excNumber}`,
+                reference_type:
+                  'excise',
+                reference_id:
+                  excise.id,
+                notes:
+                  `AUTO ROLLBACK Cukai · ${row.transaction_type} · ${excNumber}`
+              });
+            } catch (rollbackMovementError) {
+              rollbackOk = false;
+              rollbackErrors.push(
+                rollbackMovementError?.message ||
+                'Gagal reversal stock movement'
+              );
+            }
+          }
+
+          /*
+           * Failed order tetap disimpan untuk traceability,
+           * tetapi tidak boleh tetap siap_jual.
+           */
+          try {
+            await base44.entities.ExciseOrder.update(
+              excise.id,
+              {
+                status:
+                  rollbackOk
+                    ? 'dibatalkan'
+                    : 'rollback_gagal',
+                notes:
+                  [
+                    form.notes,
+                    `AUTO ROLLBACK: ${e?.message || 'Proses cukai gagal'}`
+                  ]
+                    .filter(Boolean)
+                    .join('\n')
+              }
+            );
+          } catch (orderResetError) {
+            rollbackOk = false;
+            rollbackErrors.push(
+              orderResetError?.message ||
+              'Gagal menandai ExciseOrder hasil rollback'
+            );
+          }
+
+          try {
+            await createAuditLog({
+              module: 'Cukai',
+              action:
+                rollbackOk
+                  ? 'Auto Rollback'
+                  : 'Auto Rollback Partial',
+              entity_type: 'ExciseOrder',
+              entity_id: excise.id,
+              reference_number: excNumber,
+              reason:
+                e?.message ||
+                'Excise posting failed',
+              data_after: {
+                rollback_ok:
+                  rollbackOk,
+                rollback_errors:
+                  rollbackErrors
+              }
+            });
+          } catch {
+            // Audit failure tidak boleh menggagalkan rollback stok.
+          }
+
+        } catch (rollbackFatalError) {
+          rollbackOk = false;
+          rollbackErrors.push(
+            rollbackFatalError?.message ||
+            'Rollback fatal error'
+          );
+        }
+      }
+
       toast({
         variant: 'destructive',
-        title: 'Gagal menyimpan',
-        description: e.message,
+        title:
+          rollbackOk
+            ? 'Proses cukai gagal · stok dikembalikan'
+            : 'Proses cukai gagal · rollback perlu diperiksa',
+        description:
+          rollbackOk
+            ? (
+                `${e?.message || 'Terjadi kesalahan'} · ` +
+                'Tidak ada perubahan stok bersih.'
+              )
+            : (
+                `${e?.message || 'Terjadi kesalahan'} · ` +
+                `Rollback tidak lengkap: ${rollbackErrors.join('; ')}`
+              )
       });
+
+      await loadData();
+
     } finally {
       setSubmitting(false);
     }
@@ -670,6 +1156,7 @@ export default function Excise() {
       });
     }
   };
+
 
   const columns = [
     {
@@ -796,6 +1283,7 @@ export default function Excise() {
         ]}
         searchPlaceholder="Cari proses cukai..."
       />
+
 
       <FormModal
         open={modalOpen}
