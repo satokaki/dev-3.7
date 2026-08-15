@@ -146,6 +146,55 @@ export default function Bottling() {
 
   const outputProducts = products.filter(p => p.product_type !== 'botol_kosong');
 
+  /*
+   * v3.7 UI ONLY — OUTPUT PRODUCT RECOMMENDATION
+   * Rekomendasi hanya berdasarkan nama dasar produk.
+   * Ukuran seperti 15ml / 30ml / 60ml diabaikan saat matching.
+   * Tidak mengubah logic posting, stock, HPP, ataupun pilihan produk yang tersedia.
+   */
+  const normalizeBaseProductName = (value = '') =>
+    String(value)
+      .toLowerCase()
+      .replace(/\bbulk\b/gi, ' ')
+      .replace(/\b\d+(?:[.,]\d+)?\s*ml\b/gi, ' ')
+      .replace(/[^a-z0-9]+/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  const sourceBaseName =
+    normalizeBaseProductName(form.source_product_name);
+
+  const recommendedOutputProducts =
+    [...outputProducts].sort((a, b) => {
+      const aName = normalizeBaseProductName(a?.name);
+      const bName = normalizeBaseProductName(b?.name);
+
+      const aMatch =
+        !!sourceBaseName &&
+        (
+          aName === sourceBaseName ||
+          aName.includes(sourceBaseName) ||
+          sourceBaseName.includes(aName)
+        );
+
+      const bMatch =
+        !!sourceBaseName &&
+        (
+          bName === sourceBaseName ||
+          bName.includes(sourceBaseName) ||
+          sourceBaseName.includes(bName)
+        );
+
+      if (aMatch !== bMatch) {
+        return aMatch ? -1 : 1;
+      }
+
+      return String(a?.name || '').localeCompare(
+        String(b?.name || ''),
+        'id'
+      );
+    });
+
   const selectedOutputProduct =
     products.find(p => p.id === form.output_product_id);
 
@@ -1416,7 +1465,7 @@ export default function Bottling() {
                     bottle_item_id: ''
                   }));
                 }}
-                options={outputProducts.map(p => ({
+                options={recommendedOutputProducts.map(p => ({
                   value: p.id,
                   label:
                     `${p.name}` +
