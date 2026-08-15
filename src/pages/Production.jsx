@@ -204,26 +204,30 @@ export default function Production() {
         reference_id: production.id
       };
 
-      if (!isPremixMaterial) {
-        await recordStockMovement({
-          ...common,
-          notes:
-            production.production_type === 'PREMIX'
-              ? `Produksi premix ${production.batch_number}`
-              : `Produksi ${production.batch_number}`
-        });
-        return;
+      /*
+       * STOCK IDENTITY FIX
+       *
+       * Jangan biarkan recordStockMovement menebak identity saldo.
+       * Ambil StockBalance aktual, lalu konsumsi FIFO menggunakan
+       * batch + warehouse + inventory_status yang persis sama.
+       *
+       * Ini mencegah kasus UI membaca stok cukup tetapi posting
+       * mencari identity kosong dan mendapatkan stok 0.
+       */
+      const balanceFilter = {
+        item_id: productionMaterial.material_id,
+        item_type: 'material'
+      };
+
+      if (isPremixMaterial) {
+        balanceFilter.inventory_status = 'PREMIX';
       }
 
-      const premixBalances =
-        await base44.entities.StockBalance.filter({
-          item_id: productionMaterial.material_id,
-          item_type: 'material',
-          inventory_status: 'PREMIX'
-        });
+      const balances =
+        await base44.entities.StockBalance.filter(balanceFilter);
 
       const availableLots =
-        premixBalances
+        (balances || [])
           .filter(
             balance =>
               Number(
@@ -250,15 +254,15 @@ export default function Production() {
             sum +
             Number(
               balance.available_quantity ??
-              balance.quantity ??
-              0
+                balance.quantity ??
+                0
             ),
           0
         );
 
       if (totalAvailable < quantity) {
         throw new Error(
-          `Stok PREMIX ${productionMaterial.material_name} tidak mencukupi. ` +
+          `Stok tidak mencukupi untuk ${productionMaterial.material_name}. ` +
           `Stok: ${totalAvailable}, dibutuhkan: ${quantity}`
         );
       }
@@ -271,8 +275,8 @@ export default function Production() {
         const available =
           Number(
             balance.available_quantity ??
-            balance.quantity ??
-            0
+              balance.quantity ??
+              0
           );
 
         const take =
@@ -291,11 +295,19 @@ export default function Production() {
             balance.warehouse_id || '',
           warehouse_name:
             balance.warehouse_name || '',
-          inventory_status: 'PREMIX',
+          inventory_status:
+            balance.inventory_status || '',
           quantity_out: take,
           notes:
-            `Produksi ${production.batch_number} · ` +
-            `konsumsi PREMIX ${balance.batch_number || '-'}`
+            isPremixMaterial
+              ? (
+                  `Produksi ${production.batch_number} · ` +
+                  `konsumsi PREMIX ${balance.batch_number || '-'}`
+                )
+              : (
+                  `Produksi ${production.batch_number} · ` +
+                  `konsumsi bahan FIFO`
+                )
         });
 
         remaining -= take;
@@ -628,199 +640,64 @@ export default function Production() {
   const openDetail = async (item) => {
     setEditing(item);
 
-    let mats = await base44.entities.ProductionMaterial.filter({
-      production_id: item.id
-    });
+    const mats =
+      await base44.entities.ProductionMaterial.filter({
+        production_id: item.id
+      });
 
     /*
-     * BREWER WORK-INSTRUCTION REPAIR
+     * WORK-INSTRUCTION ORDER FIX
      *
-     * Operator/Brewer boleh melihat nama bahan + gramasi,
-     * tetapi tidak perlu melihat persentase formula.
+     * Open detail hanya READ ONLY.
+     * Tidak create/update ProductionMaterial di sini.
      *
-     * Guard ini memperbaiki ProductionOrder unposted yang
-     * ProductionMaterial-nya tidak lengkap (mis. hanya PG/VG).
-     * Missing rows dihitung ulang dari recipe lalu ditambahkan
-     * ke ProductionMaterial sebelum modal penimbangan dibuka.
+     * Urutan:
+     * essence/flavor -> sweetener -> cooling ->
+     * additive/premix -> nicotine -> VG -> PG.
      */
-    if (
-      [
-        'siap_produksi',
-        'sedang_diproses',
-        'menunggu_bahan'
-      ].includes(item.status) &&
-      item.recipe_id
-    ) {
-      const recipe = recipes.find(
-        r => r.id === item.recipe_id
+    const orderKey = (row) => {
+      const mat =
+        materials.find(
+          x => x.id === row.material_id
+        );
+
+      const category =
+        String(
+          mat?.material_category ||
+          row.material_type ||
+          ''
+        ).toLowerCase();
+
+      return (
+        PRODUCTION_ORDER[category] ??
+        PRODUCTION_ORDER[
+          String(
+            row.material_type || ''
+          ).toLowerCase()
+        ] ??
+        80
       );
+    };
 
-      if (recipe) {
-        const ingredients =
-          await base44.entities.RecipeIngredient.filter({
-            recipe_id: item.recipe_id
-          });
+    const sortedMats =
+      [...mats].sort((a, b) => {
+        const pa = orderKey(a);
+        const pb = orderKey(b);
 
-        const matsById = Object.fromEntries(
-          materials.map(m => [m.id, m])
-        );
-
-        const target = Number(
-          item.target_volume ||
-          item.target_quantity ||
-          0
-        );
-
-        let expectedItems = [];
-
-        if (recipe.recipe_type === 'PREMIX') {
-          const calc = calculatePremixQuantities({
-            ingredients,
-            targetQuantity: target,
-            basis:
-              recipe.calculation_basis ||
-              'W_W',
-            materialsById: matsById
-          });
-
-          expectedItems = calc.map(c => ({
-            material_id: c.material_id,
-            material_name: c.material_name,
-            material_type: c.material_type,
-            percentage:
-              Number(c.percentage || 0),
-            volumeMl:
-              Number(c.ml || 0),
-            gram:
-              Number(c.gram || 0)
-          }));
-        } else {
-          const pgMaterial = materials.find(
-            m =>
-              m.material_category ===
-              'propylene_glycol'
-          );
-
-          const vgMaterial = materials.find(
-            m =>
-              m.material_category ===
-              'vegetable_glycerin'
-          );
-
-          const result = calculateRecipe({
-            ingredients:
-              ingredients.map(i => ({ ...i })),
-            targetVolume: target,
-            targetNicotine:
-              recipe.target_nicotine,
-            targetPG:
-              recipe.target_pg,
-            targetVG:
-              recipe.target_vg,
-            nicotineBaseStrength:
-              ingredients.find(
-                i =>
-                  i.material_type ===
-                  'nicotine'
-              )?.nicotine_strength ||
-              100,
-            pgMaterial,
-            vgMaterial
-          });
-
-          expectedItems =
-            (result.items || []).map(
-              calcItem => {
-                const mat =
-                  matsById[
-                    calcItem.material_id
-                  ];
-
-                if (
-                  isOneToOnePremix(mat)
-                ) {
-                  return {
-                    ...calcItem,
-                    gram:
-                      Number(
-                        calcItem.volumeMl ||
-                        0
-                      )
-                  };
-                }
-
-                return calcItem;
-              }
-            );
+        if (pa !== pb) {
+          return pa - pb;
         }
 
-        const existingIds =
-          new Set(
-            mats.map(
-              m => m.material_id
-            )
-          );
+        return String(
+          a.material_name || ''
+        ).localeCompare(
+          String(
+            b.material_name || ''
+          )
+        );
+      });
 
-        const missingItems =
-          expectedItems.filter(
-            expected =>
-              expected.material_id &&
-              !existingIds.has(
-                expected.material_id
-              )
-          );
-
-        if (missingItems.length > 0) {
-          await base44.entities.ProductionMaterial.bulkCreate(
-            missingItems.map(
-              expected => ({
-                production_id:
-                  item.id,
-                material_id:
-                  expected.material_id,
-                material_name:
-                  matsById[
-                    expected.material_id
-                  ]?.name ||
-                  expected.material_name ||
-                  '',
-                material_type:
-                  expected.material_type ||
-                  '',
-                percentage:
-                  Number(
-                    expected.percentage ||
-                    0
-                  ),
-                required_ml:
-                  Number(
-                    expected.volumeMl ||
-                    0
-                  ),
-                required_gram:
-                  Number(
-                    expected.gram ||
-                    0
-                  ),
-                actual_gram: 0,
-                deviation_gram: 0,
-                deviation_percent: 0,
-                stock_available: 0,
-                stock_sufficient: true
-              })
-            )
-          );
-
-          mats =
-            await base44.entities.ProductionMaterial.filter({
-              production_id:
-                item.id
-            });
-        }
-      }
-    }
-
-    setProductionMaterials(mats);
+    setProductionMaterials(sortedMats);
 
     const ck = {};
     const gMap = {};
@@ -836,7 +713,7 @@ export default function Production() {
     const isFinished =
       item.production_type !== 'PREMIX';
 
-    mats.forEach(m => {
+    sortedMats.forEach(m => {
       ck[m.material_id] =
         !!m.actual_gram &&
         Number(m.actual_gram) > 0;
@@ -886,9 +763,10 @@ export default function Production() {
 
     setChecked(ck);
     setGramasiMap(gMap);
+
     setGramasiTidakSinkron(
       isFinished &&
-      mats.length > 0 &&
+      sortedMats.length > 0 &&
       Math.abs(
         expectedTotal -
         storedTotal
