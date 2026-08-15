@@ -458,7 +458,15 @@ export default function StockCard() {
     const sorted = [...rows].sort(sortLedgerAscending);
     const running = {};
     const result = sorted.map(r => {
-      const key = `${r.item_id}|${r.inventory_status || ''}`;
+      // Running balance MUST follow the same stock identity as StockBalance:
+      // item + batch + warehouse + inventory status.
+      // This prevents stock from different batches/warehouses being merged.
+      const key = [
+        r.item_id || '',
+        r.batch_id || r.batch_number || '',
+        r.warehouse_id || r.warehouse_name || '',
+        r.inventory_status || '',
+      ].join('|');
       const delta = (Number(r.quantity_in) || 0) - (Number(r.quantity_out) || 0);
       running[key] = (running[key] || 0) + delta;
       const unitCost = resolveBalanceUnitCost(r, { materialById, stageCostIndex });
