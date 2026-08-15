@@ -111,6 +111,7 @@ const normalizeNicotineForm = (value) => {
   return v === 'SALT' || v === 'FREEBASE' ? v : '';
 };
 
+
 const getMaterialNicotineForm = (material) => {
   const direct = normalizeNicotineForm(material?.nicotine_form);
   if (direct) return direct;
@@ -118,6 +119,7 @@ const getMaterialNicotineForm = (material) => {
   const match = String(material?.notes || '').match(
     /\[\[NICOTINE_FORM:(SALT|FREEBASE)\]\]/i
   );
+
   return normalizeNicotineForm(match?.[1]);
 };
 
@@ -139,12 +141,6 @@ const EMPTY_FORM = {
 
   target_volume: 1000,
 
-  /**
-   * PATCH v3.4
-   *
-   * Nicotine sekarang dipilih secara khusus,
-   * bukan dimasukkan manual di ingredients.
-   */
   nicotine_form: '',
   nicotine_material_id: '',
 
@@ -208,6 +204,18 @@ export default function Recipes() {
     useState('all');
 
 
+  /**
+   * ============================================================
+   * PATCH v3.7 — RECIPE NICOTINE TABS
+   * ============================================================
+   */
+  const [nicotineTab, setNicotineTab] =
+    useState('all');
+
+  const [recipeNicotineMap, setRecipeNicotineMap] =
+    useState({});
+
+
   const [form, setForm] =
     useState({
       ...EMPTY_FORM,
@@ -253,6 +261,100 @@ export default function Recipes() {
         setData(items);
         setBrands(brs);
         setProducts(prods);
+
+
+        /**
+         * ======================================================
+         * PATCH v3.7 — RECIPE NICOTINE TABS
+         * ======================================================
+         *
+         * Recipe tidak menyimpan nicotine_form.
+         *
+         * Source of truth:
+         *
+         * Recipe
+         *   ↓
+         * RecipeIngredient
+         *   ↓
+         * nicotine material_id
+         *   ↓
+         * Material.nicotine_form
+         *
+         * Untuk kompatibilitas data lama,
+         * getMaterialNicotineForm() juga membaca marker:
+         *
+         * [[NICOTINE_FORM:SALT]]
+         * [[NICOTINE_FORM:FREEBASE]]
+         */
+        const recipeIds =
+          items
+            .map((r) => r.id)
+            .filter(Boolean);
+
+
+        let recipeIngredients = [];
+
+
+        if (
+          recipeIds.length > 0
+        ) {
+          recipeIngredients =
+            await base44.entities.RecipeIngredient.filter({
+              recipe_id: {
+                $in: recipeIds,
+              },
+            });
+        }
+
+
+        const materialsById =
+          Object.fromEntries(
+            mats.map(
+              (m) => [
+                m.id,
+                m,
+              ]
+            )
+          );
+
+
+        const nicotineMap = {};
+
+
+        recipeIngredients
+          .filter(
+            (i) =>
+              String(
+                i.material_type || ''
+              ).toLowerCase() ===
+              'nicotine'
+          )
+          .forEach((i) => {
+            const material =
+              materialsById[
+                i.material_id
+              ];
+
+
+            const nicotineForm =
+              getMaterialNicotineForm(
+                material
+              );
+
+
+            if (
+              nicotineForm
+            ) {
+              nicotineMap[
+                i.recipe_id
+              ] = nicotineForm;
+            }
+          });
+
+
+        setRecipeNicotineMap(
+          nicotineMap
+        );
 
 
         setMaterials(
@@ -301,22 +403,37 @@ export default function Recipes() {
     !form.nicotine_form
       ? []
       : materials.filter((m) => {
-          const strength = Number(m.nicotine_strength) || 0;
-          if (strength <= 0) return false;
+          const strength =
+            Number(m.nicotine_strength) || 0;
+
+          if (strength <= 0) {
+            return false;
+          }
+
 
           const rawNicotine =
             m.material_type === 'RAW_MATERIAL' &&
             m.material_category === 'nicotine';
 
+
           const premixNicotine =
             m.material_type === 'PREMIX' &&
             !!getMaterialNicotineForm(m);
 
-          if (!rawNicotine && !premixNicotine) return false;
+
+          if (
+            !rawNicotine &&
+            !premixNicotine
+          ) {
+            return false;
+          }
+
 
           return (
             getMaterialNicotineForm(m) ===
-            normalizeNicotineForm(form.nicotine_form)
+            normalizeNicotineForm(
+              form.nicotine_form
+            )
           );
         });
 
@@ -329,14 +446,6 @@ export default function Recipes() {
     ) || null;
 
 
-  /**
-   * Finished Product tidak lagi memilih nicotine
-   * melalui Bahan Resep.
-   *
-   * PREMIX tetap boleh memakai nicotine sebagai
-   * ingredient manual karena premix mempunyai
-   * use-case berbeda.
-   */
   const ingredientPickerMaterials =
     form.recipe_type ===
     'FINISHED_PRODUCT'
@@ -354,9 +463,6 @@ export default function Recipes() {
    * ============================================================
    */
   useEffect(() => {
-    /**
-     * Calculator ini khusus finished product.
-     */
     if (
       form.recipe_type === 'PREMIX'
     ) {
@@ -389,15 +495,6 @@ export default function Recipes() {
       );
 
 
-    /**
-     * Nicotine tidak dikirim melalui ingredients.
-     *
-     * Ini mencegah double nicotine:
-     *
-     * manual ingredient
-     * +
-     * automatic nicotine.
-     */
     const manualIngredients =
       form.ingredients
         .filter(
@@ -417,10 +514,6 @@ export default function Recipes() {
           return {
             ...i,
 
-            /**
-             * Master Bahan adalah
-             * source of truth.
-             */
             density:
               Number(
                 master?.density ??
@@ -474,12 +567,6 @@ export default function Recipes() {
             form.target_vg
           ),
 
-        /**
-         * PATCH v3.4
-         *
-         * Nicotine base dipilih langsung
-         * dari Master Bahan.
-         */
         nicotineMaterial:
           selectedNicotineMaterial,
 
@@ -569,18 +656,6 @@ export default function Recipes() {
    * ============================================================
    * OPEN EDIT
    * ============================================================
-   *
-   * Backward compatibility:
-   *
-   * Recipe lama menyimpan nicotine sebagai RecipeIngredient.
-   *
-   * Ketika dibuka:
-   *
-   * 1. ingredient nicotine lama dibaca
-   * 2. material_id dipindahkan ke selector nicotine
-   * 3. nicotine dihapus dari ingredient manual UI
-   *
-   * Saat save nanti nicotine dibuat ulang otomatis.
    */
   const openEdit =
     async (item) => {
@@ -658,18 +733,14 @@ export default function Recipes() {
           item.target_volume ||
           1000,
 
-
-        /**
-         * Nicotine selector direkonstruksi
-         * dari RecipeIngredient lama.
-         */
         nicotine_form:
-          getMaterialNicotineForm(nicotineMaster),
+          getMaterialNicotineForm(
+            nicotineMaster
+          ),
 
         nicotine_material_id:
           nicotineMaster?.id ||
           '',
-
 
         target_nicotine:
           item.target_nicotine ??
@@ -683,13 +754,11 @@ export default function Recipes() {
           item.target_vg ??
           60,
 
-
         status:
           item.status,
 
         notes:
           item.notes || '',
-
 
         visibility_type:
           item.visibility_type ||
@@ -704,7 +773,6 @@ export default function Recipes() {
         allowed_role_ids:
           item.allowed_role_ids ||
           [],
-
 
         ingredients:
           manualIngredients.map(
@@ -948,10 +1016,6 @@ export default function Recipes() {
       }
 
 
-      /**
-       * PREMIX tetap wajib memiliki
-       * ingredient manual.
-       */
       if (
         form.recipe_type ===
           'PREMIX' &&
@@ -970,12 +1034,6 @@ export default function Recipes() {
       }
 
 
-      /**
-       * Finished product:
-       *
-       * nicotine wajib dipilih hanya
-       * bila target nicotine > 0.
-       */
       if (
         form.recipe_type !==
           'PREMIX' &&
@@ -1016,9 +1074,6 @@ export default function Recipes() {
       }
 
 
-      /**
-       * PREMIX validation lama.
-       */
       if (
         form.recipe_type ===
         'PREMIX'
@@ -1112,10 +1167,6 @@ export default function Recipes() {
           return;
         }
       } else {
-        /**
-         * Finished Product harus punya
-         * kalkulasi valid.
-         */
         if (!calcResult) {
           toast({
             variant:
@@ -1205,15 +1256,6 @@ export default function Recipes() {
           );
 
 
-        /**
-         * Recipe entity tetap memakai
-         * field lama.
-         *
-         * Nicotine selection dipersist
-         * melalui RecipeIngredient auto,
-         * agar backend/schema lama dan
-         * Production tetap kompatibel.
-         */
         const payload = {
           code:
             recipeCode,
@@ -1327,10 +1369,6 @@ export default function Recipes() {
         }
 
 
-        /**
-         * Existing RecipeIngredients
-         * di-rebuild.
-         */
         if (editing) {
           const existing =
             await base44.entities.RecipeIngredient.filter({
@@ -1356,25 +1394,6 @@ export default function Recipes() {
         }
 
 
-        /**
-         * ======================================================
-         * BUILD INGREDIENTS TO SAVE
-         * ======================================================
-         *
-         * Manual ingredients tetap sama.
-         *
-         * Nicotine AUTO diubah kembali
-         * menjadi RecipeIngredient internal.
-         *
-         * Dengan cara ini:
-         *
-         * - user tidak input nicotine manual
-         * - recipeCalculator auto
-         * - Production tetap membaca nicotine
-         * - HPP tetap membaca nicotine
-         * - stock consumption tetap bekerja
-         * - traceability tetap bekerja
-         */
         const ingredientsToSave =
           form.ingredients.map(
             (i) => ({
@@ -1433,10 +1452,6 @@ export default function Recipes() {
           );
 
 
-        /**
-         * FINISHED PRODUCT:
-         * tambahkan nicotine hasil AUTO calculation.
-         */
         if (
           form.recipe_type ===
             'FINISHED_PRODUCT' &&
@@ -1469,11 +1484,6 @@ export default function Recipes() {
             material_name:
               autoNicotine.material_name,
 
-            /**
-             * Tetap "nicotine"
-             * agar Production/HPP lama
-             * tetap mengenalinya.
-             */
             material_type:
               'nicotine',
 
@@ -1508,10 +1518,6 @@ export default function Recipes() {
                 autoNicotine.nicotine_strength
               ) || 0,
 
-            /**
-             * Nicotine ditaruh sebelum
-             * PG/VG auto dalam urutan mixing.
-             */
             mix_order:
               90,
 
@@ -1521,9 +1527,6 @@ export default function Recipes() {
         }
 
 
-        /**
-         * Save RecipeIngredient.
-         */
         if (
           ingredientsToSave.length >
           0
@@ -2286,6 +2289,11 @@ export default function Recipes() {
     );
 
 
+  /**
+   * ============================================================
+   * PATCH v3.7 — FILTER NICOTINE TAB
+   * ============================================================
+   */
   const visibleData =
     (
       isAdmin
@@ -2297,57 +2305,90 @@ export default function Recipes() {
                 r
               )
           )
-    ).filter((r) => {
-      if (
-        visFilter ===
-        'all'
-      ) {
+    )
+      .filter((r) => {
+        if (
+          visFilter ===
+          'all'
+        ) {
+          return true;
+        }
+
+        if (
+          visFilter ===
+          'public'
+        ) {
+          return (
+            (
+              r.visibility_type ||
+              'PUBLIC_INTERNAL'
+            ) ===
+              'PUBLIC_INTERNAL' &&
+            !r.is_hidden
+          );
+        }
+
+        if (
+          visFilter ===
+          'admin_only'
+        ) {
+          return (
+            r.visibility_type ===
+            'ADMIN_ONLY'
+          );
+        }
+
+        if (
+          visFilter ===
+          'restricted'
+        ) {
+          return (
+            r.visibility_type ===
+            'ROLE_RESTRICTED'
+          );
+        }
+
+        if (
+          visFilter ===
+          'hidden'
+        ) {
+          return !!r.is_hidden;
+        }
+
         return true;
-      }
+      })
+      .filter((r) => {
+        /**
+         * SEMUA:
+         * tidak mengubah behaviour existing.
+         */
+        if (
+          nicotineTab ===
+          'all'
+        ) {
+          return true;
+        }
 
-      if (
-        visFilter ===
-        'public'
-      ) {
+
+        /**
+         * FREEBASE / SALT:
+         * hanya resep aktif/approved.
+         */
+        if (
+          r.status !==
+          'approved'
+        ) {
+          return false;
+        }
+
+
         return (
-          (
-            r.visibility_type ||
-            'PUBLIC_INTERNAL'
-          ) ===
-            'PUBLIC_INTERNAL' &&
-          !r.is_hidden
+          recipeNicotineMap[
+            r.id
+          ] ===
+          nicotineTab
         );
-      }
-
-      if (
-        visFilter ===
-        'admin_only'
-      ) {
-        return (
-          r.visibility_type ===
-          'ADMIN_ONLY'
-        );
-      }
-
-      if (
-        visFilter ===
-        'restricted'
-      ) {
-        return (
-          r.visibility_type ===
-          'ROLE_RESTRICTED'
-        );
-      }
-
-      if (
-        visFilter ===
-        'hidden'
-      ) {
-        return !!r.is_hidden;
-      }
-
-      return true;
-    });
+      });
 
 
   /**
@@ -2415,6 +2456,71 @@ export default function Recipes() {
             </SelectItem>
           </SelectContent>
         </Select>
+      </div>
+
+
+      {/* ========================================================
+          PATCH v3.7 — RECIPE NICOTINE TABS
+          ======================================================== */}
+
+      <div className="flex items-center gap-1 mb-3 border-b border-border">
+
+        {[
+          {
+            value:
+              'all',
+            label:
+              'Semua',
+          },
+          {
+            value:
+              'FREEBASE',
+            label:
+              'Freebase',
+          },
+          {
+            value:
+              'SALT',
+            label:
+              'Salt',
+          },
+        ].map((tab) => {
+
+          const active =
+            nicotineTab ===
+            tab.value;
+
+
+          return (
+            <button
+              key={
+                tab.value
+              }
+              type="button"
+              onClick={() =>
+                setNicotineTab(
+                  tab.value
+                )
+              }
+              className={`
+                px-4
+                py-2
+                text-[12.5px]
+                font-medium
+                border-b-2
+                transition-colors
+                ${
+                  active
+                    ? 'border-primary text-primary'
+                    : 'border-transparent text-muted-foreground hover:text-foreground'
+                }
+              `}
+            >
+              {tab.label}
+            </button>
+          );
+        })}
+
       </div>
 
 
@@ -2609,10 +2715,6 @@ export default function Recipes() {
                     recipe_type:
                       v,
 
-                    /**
-                     * Jika berpindah ke premix,
-                     * reset selector nicotine.
-                     */
                     nicotine_form:
                       v ===
                       'PREMIX'
@@ -2827,10 +2929,6 @@ export default function Recipes() {
               </div>
 
 
-              {/* ============================
-                  NICOTINE AUTO
-                  ============================ */}
-
               <div>
                 <Label className="text-[12.5px] mb-1">
                   Jenis Nicotine
@@ -2848,11 +2946,6 @@ export default function Recipes() {
                         nicotine_form:
                           normalizeNicotineForm(v),
 
-                        /**
-                         * Ganti Salt/Freebase:
-                         * nicotine material harus
-                         * dipilih ulang.
-                         */
                         nicotine_material_id:
                           '',
                       })
