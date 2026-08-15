@@ -244,6 +244,7 @@ export default function Bottling() {
     const outputProduct = products.find(p => p.id === form.output_product_id);
     const bottleMat = bottleMaterials.find(m => m.id === form.bottle_item_id);
     const bottleStock = bottleStocks[form.bottle_item_id] || 0;
+    const selectedBulkBalance = bulkStock.find(b => b.id === form.stock_id);
 
     if (!sourceProduct) {
       toast({ variant: 'destructive', title: 'Produk sumber bulk tidak ditemukan' });
@@ -265,6 +266,73 @@ export default function Bottling() {
         variant: 'destructive',
         title: 'Stok botol tidak cukup',
         description: `Tersedia: ${bottleStock}`,
+      });
+      return;
+    }
+
+    /*
+     * v3.7 STOCK IDENTITY FIX
+     *
+     * UI sebelumnya membaca stok botol secara aggregate, tetapi saat posting
+     * recordStockMovement mencari identity kosong. Akibatnya stok yang nyata
+     * tersedia bisa terbaca 0.
+     *
+     * Sebelum membuat BottlingOrder, baca StockBalance aktual dan kunci
+     * konsumsi ke identity batch + warehouse + stage/status yang benar.
+     */
+    const bottleItemType =
+      bottleMat.material_type
+        ? 'material'
+        : 'product';
+
+    const bottleBalanceRows =
+      await base44.entities.StockBalance.filter({
+        item_id: bottleMat.id,
+        item_type: bottleItemType
+      });
+
+    const bottleLots =
+      (bottleBalanceRows || [])
+        .filter(row =>
+          Number(
+            row.available_quantity ??
+            row.quantity ??
+            0
+          ) > 0
+        )
+        .sort((a, b) => {
+          const da =
+            a.created_date ||
+            a.updated_date ||
+            '';
+          const db =
+            b.created_date ||
+            b.updated_date ||
+            '';
+          return da.localeCompare(db);
+        });
+
+    const exactBottleStock =
+      bottleLots.reduce(
+        (sum, row) =>
+          sum +
+          Number(
+            row.available_quantity ??
+            row.quantity ??
+            0
+          ),
+        0
+      );
+
+    if (
+      Number(form.bottle_count) >
+      exactBottleStock
+    ) {
+      toast({
+        variant: 'destructive',
+        title: 'Stok botol tidak cukup',
+        description:
+          `Tersedia aktual: ${exactBottleStock}, dibutuhkan: ${Number(form.bottle_count)}`,
       });
       return;
     }
@@ -341,15 +409,27 @@ export default function Bottling() {
       const safeHppBottling =
         Number.isFinite(hppBottlingPerBottle) ? hppBottlingPerBottle : 0;
 
-      // 1) Consume BULK SOURCE
+      // 1) Consume BULK SOURCE using the selected StockBalance identity
       await recordStockMovement({
         item_type: 'product',
         item_id: sourceProduct.id,
         item_name: sourceProduct.name || form.source_product_name,
         item_code: sourceProduct.code || '',
-        batch_id: form.batch_id,
-        batch_number: form.batch_number,
-        inventory_status: 'BULK',
+        batch_id:
+          selectedBulkBalance?.batch_id ||
+          form.batch_id,
+        batch_number:
+          selectedBulkBalance?.batch_number ||
+          form.batch_number,
+        warehouse_id:
+          selectedBulkBalance?.warehouse_id ||
+          '',
+        warehouse_name:
+          selectedBulkBalance?.warehouse_name ||
+          '',
+        inventory_status:
+          selectedBulkBalance?.inventory_status ||
+          'BULK',
         quantity_out: totalVolume,
         unit: 'mililiter',
         unit_cost: hppBulkPerMl,
@@ -360,22 +440,58 @@ export default function Bottling() {
         notes: `Bottling ${botNumber}`,
       });
 
-      // 2) Consume BOTTLE
-      await recordStockMovement({
-        item_type: bottleMat.material_type ? 'material' : 'product',
-        item_id: bottleMat.id,
-        item_name: bottleMat.name,
-        item_code: bottleMat.code || '',
-        inventory_status: '',
-        quantity_out: bottleQty,
-        unit: bottleMat.unit || 'unit',
-        unit_cost: bottleHbt,
-        transaction_type: 'bottling_bottle_consumption',
-        transaction_number: botNumber,
-        reference_type: 'bottling',
-        reference_id: order.id,
-        notes: `Botol untuk ${botNumber}`,
-      });
+      // 2) Consume BOTTLE FIFO using each real StockBalance identity
+      let remainingBottleQty = bottleQty;
+
+      for (const lot of bottleLots) {
+        if (remainingBottleQty <= 0) break;
+
+        const available =
+          Number(
+            lot.available_quantity ??
+            lot.quantity ??
+            0
+          );
+
+        const take =
+          Math.min(
+            remainingBottleQty,
+            available
+          );
+
+        await recordStockMovement({
+          item_type: bottleItemType,
+          item_id: bottleMat.id,
+          item_name: bottleMat.name,
+          item_code: bottleMat.code || '',
+          batch_id:
+            lot.batch_id || '',
+          batch_number:
+            lot.batch_number || '',
+          warehouse_id:
+            lot.warehouse_id || '',
+          warehouse_name:
+            lot.warehouse_name || '',
+          inventory_status:
+            lot.inventory_status || '',
+          quantity_out: take,
+          unit:
+            bottleMat.unit || 'unit',
+          unit_cost: bottleHbt,
+          transaction_type:
+            'bottling_bottle_consumption',
+          transaction_number:
+            botNumber,
+          reference_type:
+            'bottling',
+          reference_id:
+            order.id,
+          notes:
+            `Botol untuk ${botNumber}`,
+        });
+
+        remainingBottleQty -= take;
+      }
 
       // 3) Create BOTTLING OUTPUT as selected FINAL SKU
       await recordStockMovement({
