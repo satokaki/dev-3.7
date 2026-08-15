@@ -37,6 +37,21 @@ const MODE_LABEL = {
   label: 'Bahan Label',
 };
 
+/*
+ * v3.7 READ MODEL ONLY
+ * Fallback area operasional ketika ledger/balance lama tidak membawa
+ * warehouse_id / warehouse_name. Tidak mengubah data stok.
+ */
+const INVENTORY_AREA_LABEL = {
+  RAW_MATERIAL: 'Gudang Bahan',
+  BULK: 'Gudang Produksi',
+  READY_FOR_LABELING: 'Siap Labeling',
+  UNEXCISED: 'Siap Cukai',
+  READY_FOR_SALE: 'Gudang Siap Jual',
+  QUARANTINE: 'Karantina',
+  REJECTED: 'Reject',
+};
+
 const localDate = (date) => {
   if (!date) return '—';
   return new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(date));
@@ -251,12 +266,57 @@ export default function StockCardDedicated() {
     return balances.filter(b => b.item_type === 'material' && b.item_id === selectedId);
   }, [balances, mode, selectedId, selectedReadyStock, historicalBatchBalances]);
   const warehouseStock = useMemo(() => Object.values(selectedBalances.reduce((acc, b) => {
-    const key = b.warehouse_id || b.warehouse_name || 'unknown';
-    if (!acc[key]) acc[key] = { id: key, name: b.warehouse_name || 'Gudang tidak diketahui', quantity: 0, units: new Set() };
-    acc[key].quantity += Number(b.available_quantity ?? b.quantity ?? 0);
-    acc[key].units.add(b.inventory_status === 'BULK' ? 'ml' : unitLabel(b.unit || selectedUnit));
+    const fallbackName =
+      INVENTORY_AREA_LABEL[b.inventory_status] ||
+      'Gudang tidak diketahui';
+
+    const warehouseName =
+      b.warehouse_name ||
+      fallbackName;
+
+    /*
+     * Jika warehouse kosong, stage harus menjadi bagian dari key.
+     * Ini mencegah BULK, UNEXCISED, dan READY_FOR_SALE tanpa warehouse
+     * tergabung ke bucket "unknown" yang sama.
+     */
+    const key =
+      b.warehouse_id ||
+      b.warehouse_name ||
+      `stage:${b.inventory_status || 'UNKNOWN'}`;
+
+    if (!acc[key]) {
+      acc[key] = {
+        id: key,
+        name: warehouseName,
+        quantity: 0,
+        units: new Set()
+      };
+    }
+
+    acc[key].quantity +=
+      Number(
+        b.available_quantity ??
+        b.quantity ??
+        0
+      );
+
+    acc[key].units.add(
+      b.inventory_status === 'BULK'
+        ? 'ml'
+        : unitLabel(b.unit || selectedUnit)
+    );
+
     return acc;
-  }, {})).map(row => ({ ...row, unit: row.units.size === 1 ? [...row.units][0] : 'campuran' })).sort((a, b) => b.quantity - a.quantity), [selectedBalances, selectedUnit]);
+  }, {}))
+    .map(row => ({
+      ...row,
+      unit:
+        row.units.size === 1
+          ? [...row.units][0]
+          : 'campuran'
+    }))
+    .sort((a, b) => b.quantity - a.quantity),
+  [selectedBalances, selectedUnit]);
 
   const totalIn = rows.reduce((sum, row) => sum + Number(row.quantity_in || 0), 0);
   const totalOut = rows.reduce((sum, row) => sum + Number(row.quantity_out || 0), 0);
