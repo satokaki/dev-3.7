@@ -3,7 +3,6 @@ import { base44 } from '@/api/base44Client';
 import { useToast } from '@/components/ui/use-toast';
 import PageHeader from '@/components/PageHeader';
 import DataTable from '@/components/DataTable';
-import FormModal from '@/components/FormModal';
 import StatusBadge from '@/components/StatusBadge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -18,7 +17,7 @@ import {
 } from '@/components/ui/select';
 import NumberInput from '@/components/NumberInput';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, Ban, Eye, X } from 'lucide-react';
+import { Ban, Eye, X, RotateCcw, Factory, Tags } from 'lucide-react';
 import { generateOrderNumber } from '@/lib/sequence';
 import {
   recordStockMovement,
@@ -50,6 +49,7 @@ const findWarehouseByAliases = (warehouses, aliases) => {
 };
 
 const emptyForm = () => ({
+  labeling_mode: '',
   stock_id: '',
   source_product_id: '',
   source_product_name: '',
@@ -78,6 +78,146 @@ const ledgerTime = row =>
 const sameValue = (a, b) =>
   String(a || '') === String(b || '');
 
+const stockIdentityKey = row =>
+  [
+    row?.item_type || '',
+    row?.item_id || '',
+    row?.batch_id || '',
+    row?.batch_number || '',
+    row?.warehouse_id || '',
+    row?.inventory_status || '',
+  ].join('|');
+
+const movementDelta = row =>
+  (Number(row?.quantity_in) || 0) -
+  (Number(row?.quantity_out) || 0);
+
+const movementsNetZero = rows => {
+  const totals = new Map();
+
+  for (const row of rows || []) {
+    const key = stockIdentityKey(row);
+    totals.set(
+      key,
+      (totals.get(key) || 0) +
+        movementDelta(row)
+    );
+  }
+
+  return [...totals.values()].every(
+    value => Math.abs(value) < 1e-9
+  );
+};
+
+const balanceAvailable = balance =>
+  Number(
+    balance?.available_quantity ??
+      balance?.quantity ??
+      0
+  ) || 0;
+
+const balanceSortTime = balance =>
+  new Date(
+    balance?.created_date ||
+      balance?.updated_date ||
+      0
+  ).getTime();
+
+
+const normalizeMatchText = value =>
+  String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+
+const LABEL_MATCH_STOPWORDS = new Set([
+  'label',
+  'stiker',
+  'sticker',
+  'izzi',
+  'liquid',
+  'ready',
+  'for',
+  'labeling',
+  'batch',
+  'mfg',
+  'btl',
+  'botol',
+  'ml',
+  'mg',
+]);
+
+const matchTokens = value =>
+  normalizeMatchText(value)
+    .split(/\s+/)
+    .filter(
+      token =>
+        token &&
+        token.length >= 2 &&
+        !LABEL_MATCH_STOPWORDS.has(token) &&
+        !/^\d+$/.test(token)
+    );
+
+const labelRecommendationScore = ({
+  label,
+  sourceName,
+  batchNumber,
+  resultBrandName,
+  resultProductName,
+  mode,
+}) => {
+  const haystack = normalizeMatchText(
+    `${label?.material_name || ''} ${label?.material_code || ''}`
+  );
+
+  if (!haystack) return 0;
+
+  const sourceTokens = matchTokens(
+    `${sourceName || ''} ${batchNumber || ''}`
+  );
+  const resultTokens = matchTokens(
+    resultProductName || ''
+  );
+  const brandText = normalizeMatchText(
+    resultBrandName || ''
+  );
+
+  let score = 0;
+
+  for (const token of new Set(sourceTokens)) {
+    if (haystack.includes(token)) {
+      score += 3;
+    }
+  }
+
+  for (const token of new Set(resultTokens)) {
+    if (haystack.includes(token)) {
+      score += 5;
+    }
+  }
+
+  if (
+    brandText &&
+    haystack.includes(brandText)
+  ) {
+    score +=
+      mode === 'maklon'
+        ? 8
+        : 3;
+  }
+
+  if (
+    mode === 'izzi' &&
+    haystack.includes('izzi')
+  ) {
+    score += 2;
+  }
+
+  return score;
+};
+
 export default function Labeling() {
   const { toast } = useToast();
 
@@ -90,7 +230,6 @@ export default function Labeling() {
   const [labelStocks, setLabelStocks] = useState({});
   const [loading, setLoading] = useState(true);
 
-  const [modalOpen, setModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [voidingId, setVoidingId] = useState('');
 
@@ -107,6 +246,7 @@ export default function Labeling() {
 
   const [form, setForm] = useState(emptyForm());
   const [labelSearch, setLabelSearch] = useState('');
+  const [showAllLabels, setShowAllLabels] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -160,8 +300,14 @@ export default function Labeling() {
       );
 
       const combinedLabels = [
-        ...materialLabels,
-        ...(labelProducts || []),
+        ...materialLabels.map(item => ({
+          ...item,
+          __stock_item_type: 'material',
+        })),
+        ...(labelProducts || []).map(item => ({
+          ...item,
+          __stock_item_type: 'product',
+        })),
       ];
 
       setLabelMaterials(combinedLabels);
@@ -204,6 +350,8 @@ export default function Labeling() {
         material_id: item.id,
         material_name: item.name,
         material_code: item.code || '',
+        item_type:
+          item.__stock_item_type || 'material',
         unit: item.unit || 'unit',
         quantity_per_unit: '1',
         stock: labelStocks[item.id] || 0,
@@ -212,7 +360,7 @@ export default function Labeling() {
     [labelMaterials, labelStocks]
   );
 
-  const openAdd = () => {
+  const resetDedicatedForm = () => {
     if (submitting || voidingId) return;
 
     setForm({
@@ -221,8 +369,28 @@ export default function Labeling() {
     });
 
     setLabelSearch('');
-    setModalOpen(true);
+    setShowAllLabels(false);
   };
+
+  useEffect(() => {
+    if (
+      !submitting &&
+      !voidingId &&
+      form.labels.length === 0 &&
+      labelMaterials.length > 0
+    ) {
+      setForm(current => ({
+        ...current,
+        labels: buildLabels(),
+      }));
+    }
+  }, [
+    buildLabels,
+    form.labels.length,
+    labelMaterials.length,
+    submitting,
+    voidingId,
+  ]);
 
   const onStockChange = stockId => {
     const stock = siapLabelStock.find(
@@ -233,12 +401,10 @@ export default function Labeling() {
       item => item.id === stock?.item_id
     );
 
-    const sourceBrand = brands.find(
-      item => item.id === sourceProduct?.brand_id
-    );
-
     setForm(current => ({
       ...current,
+
+      labeling_mode: '',
 
       stock_id: stockId,
 
@@ -250,19 +416,10 @@ export default function Labeling() {
         stock?.item_name ||
         '',
 
-      result_brand_id:
-        sourceProduct?.brand_id || '',
-
-      result_brand_name:
-        sourceBrand?.name ||
-        sourceProduct?.brand_name ||
-        '',
-
-      result_product_id:
-        sourceProduct?.id || '',
-
-      result_product_name:
-        sourceProduct?.name || '',
+      result_brand_id: '',
+      result_brand_name: '',
+      result_product_id: '',
+      result_product_name: '',
 
       batch_id:
         stock?.batch_id || '',
@@ -279,6 +436,76 @@ export default function Labeling() {
       quantity:
         String(stock?.available_quantity || ''),
     }));
+
+    setLabelSearch('');
+    setShowAllLabels(false);
+  };
+
+  const onModeChange = mode => {
+    if (!form.stock_id) {
+      toast({
+        variant: 'destructive',
+        title: 'Pilih batch siap labeling terlebih dahulu',
+      });
+      return;
+    }
+
+    const sourceProduct = products.find(
+      item => item.id === form.source_product_id
+    );
+
+    const sourceBrand = brands.find(
+      item => item.id === sourceProduct?.brand_id
+    );
+
+    if (mode === 'izzi') {
+      const sourceIsIzzi =
+        normalizeMatchText(
+          sourceBrand?.name || ''
+        ).includes('izzi');
+
+      const izziBrand =
+        sourceIsIzzi
+          ? sourceBrand
+          : brands.find(brand =>
+              normalizeMatchText(
+                brand?.name || ''
+              ).includes('izzi')
+            ) || null;
+
+      const sameProductAllowed =
+        izziBrand &&
+        sourceProduct?.brand_id === izziBrand.id;
+
+      setForm(current => ({
+        ...current,
+        labeling_mode: 'izzi',
+        result_brand_id:
+          izziBrand?.id || '',
+        result_brand_name:
+          izziBrand?.name || '',
+        result_product_id:
+          sameProductAllowed
+            ? sourceProduct?.id || ''
+            : '',
+        result_product_name:
+          sameProductAllowed
+            ? sourceProduct?.name || ''
+            : '',
+      }));
+    } else {
+      setForm(current => ({
+        ...current,
+        labeling_mode: 'maklon',
+        result_brand_id: '',
+        result_brand_name: '',
+        result_product_id: '',
+        result_product_name: '',
+      }));
+    }
+
+    setLabelSearch('');
+    setShowAllLabels(false);
   };
 
   const resultProducts = useMemo(() => {
@@ -299,6 +526,70 @@ export default function Labeling() {
   }, [
     products,
     form.result_brand_id,
+  ]);
+
+
+  const izziBrands = useMemo(
+    () =>
+      brands.filter(brand =>
+        normalizeMatchText(
+          brand?.name || ''
+        ).includes('izzi')
+      ),
+    [brands]
+  );
+
+  const availableResultBrands =
+    form.labeling_mode === 'izzi'
+      ? izziBrands
+      : brands;
+
+  const recommendedLabels = useMemo(() => {
+    const scored =
+      (form.labels || [])
+        .map(label => ({
+          label,
+          score:
+            labelRecommendationScore({
+              label,
+              sourceName:
+                form.source_product_name,
+              batchNumber:
+                form.batch_number,
+              resultBrandName:
+                form.result_brand_name,
+              resultProductName:
+                form.result_product_name,
+              mode:
+                form.labeling_mode,
+            }),
+        }))
+        .filter(
+          row =>
+            row.score > 0
+        )
+        .sort(
+          (a, b) =>
+            b.score - a.score ||
+            String(
+              a.label.material_name || ''
+            ).localeCompare(
+              String(
+                b.label.material_name || ''
+              )
+            )
+        );
+
+    return scored.map(
+      row => row.label
+    );
+  }, [
+    form.labels,
+    form.source_product_name,
+    form.batch_number,
+    form.result_brand_name,
+    form.result_product_name,
+    form.labeling_mode,
   ]);
 
   const onResultBrandChange = brandId => {
@@ -488,6 +779,15 @@ export default function Labeling() {
         variant: 'destructive',
         title:
           'Batch, jumlah, operator wajib',
+      });
+
+      return;
+    }
+
+    if (!form.labeling_mode) {
+      toast({
+        variant: 'destructive',
+        title: 'Pilih mode IZZI atau MAKLON',
       });
 
       return;
@@ -684,20 +984,90 @@ export default function Labeling() {
 
     setSubmitting(true);
 
+    let order = null;
+    let labelingNumber = '';
+    let committed = false;
+    let rollbackStatus = '';
+
     try {
+      /*
+       * =====================================================
+       * FRESH STOCK PREFLIGHT
+       * =====================================================
+       *
+       * Jangan percaya angka stok dari UI karena bisa stale.
+       * Source READY_FOR_LABELING dan label/stiker dibaca ulang
+       * dari StockBalance tepat sebelum destructive write.
+       */
+      const [
+        freshProductBalances,
+        freshMaterialBalances,
+      ] = await Promise.all([
+        getAllStockBalances('product'),
+        getAllStockBalances('material'),
+      ]);
+
+      let freshSourceStock =
+        (freshProductBalances || []).find(
+          balance =>
+            sameValue(
+              balance.id,
+              sourceStock.id
+            )
+        );
+
+      if (!freshSourceStock) {
+        freshSourceStock =
+          (freshProductBalances || []).find(
+            balance =>
+              sameValue(
+                balance.item_id,
+                sourceStock.item_id
+              ) &&
+              sameValue(
+                balance.batch_id,
+                sourceStock.batch_id
+              ) &&
+              sameValue(
+                balance.batch_number,
+                sourceStock.batch_number
+              ) &&
+              sameValue(
+                balance.warehouse_id,
+                sourceStock.warehouse_id
+              ) &&
+              sameValue(
+                balance.inventory_status,
+                'READY_FOR_LABELING'
+              )
+          );
+      }
+
+      const freshSourceAvailable =
+        balanceAvailable(
+          freshSourceStock
+        );
+
+      if (
+        !freshSourceStock ||
+        freshSourceAvailable < qty
+      ) {
+        throw new Error(
+          `Stok READY_FOR_LABELING berubah. ` +
+          `Dibutuhkan ${qty}, tersedia ${freshSourceAvailable}. ` +
+          `Segarkan data lalu coba lagi.`
+        );
+      }
+
       /*
        * =====================================================
        * HPP PREFLIGHT
        * =====================================================
-       *
-       * Dilakukan SEBELUM LabelingOrder.create.
        */
-
       const hppBottlingPerBottle =
         await resolveReadyForLabelingHpp({
           stock:
-            sourceStock,
-
+            freshSourceStock,
           sourceProduct,
         });
 
@@ -717,10 +1087,13 @@ export default function Labeling() {
 
       /*
        * =====================================================
-       * LABEL COST PREFLIGHT
+       * LABEL / STICKER LOT PREFLIGHT
        * =====================================================
+       *
+       * UI boleh menampilkan stok agregat, tetapi posting harus
+       * memakai identity StockBalance aktual:
+       * item + batch + warehouse + inventory_status.
        */
-
       const labelCostRows =
         usedLabels.map(label => {
           const quantityPerUnit =
@@ -729,7 +1102,8 @@ export default function Labeling() {
             ) || 1;
 
           const totalRequired =
-            qty * quantityPerUnit;
+            qty *
+            quantityPerUnit;
 
           const labelItem =
             labelMaterials.find(
@@ -737,6 +1111,54 @@ export default function Labeling() {
                 item.id ===
                 label.material_id
             );
+
+          const itemType =
+            label.item_type ||
+            labelItem?.__stock_item_type ||
+            'material';
+
+          const sourceBalances =
+            itemType === 'product'
+              ? freshProductBalances
+              : freshMaterialBalances;
+
+          const lots =
+            (sourceBalances || [])
+              .filter(
+                balance =>
+                  sameValue(
+                    balance.item_id,
+                    label.material_id
+                  ) &&
+                  balanceAvailable(
+                    balance
+                  ) > 0
+              )
+              .sort(
+                (a, b) =>
+                  balanceSortTime(a) -
+                  balanceSortTime(b)
+              );
+
+          const freshAvailable =
+            lots.reduce(
+              (sum, lot) =>
+                sum +
+                balanceAvailable(
+                  lot
+                ),
+              0
+            );
+
+          if (
+            freshAvailable <
+            totalRequired
+          ) {
+            throw new Error(
+              `Stok "${label.material_name}" berubah. ` +
+              `Butuh ${totalRequired}, tersedia ${freshAvailable}.`
+            );
+          }
 
           const labelHpp =
             Number(
@@ -746,10 +1168,12 @@ export default function Labeling() {
           return {
             label,
             labelItem,
+            itemType,
             quantityPerUnit,
             totalRequired,
+            freshAvailable,
+            lots,
             labelHpp,
-
             totalCost:
               totalRequired *
               labelHpp,
@@ -796,9 +1220,12 @@ export default function Labeling() {
        * =====================================================
        * WRITE START
        * =====================================================
+       *
+       * Semua stock movement memakai reference_id order.
+       * Jika salah satu critical write gagal, catch akan mencari
+       * movement attempt ini dan membaliknya otomatis.
        */
-
-      const labelingNumber =
+      labelingNumber =
         await generateOrderNumber(
           'LBL',
           'LabelingOrder'
@@ -807,7 +1234,7 @@ export default function Labeling() {
       const defaultLabel =
         usedLabels[0];
 
-      const order =
+      order =
         await base44.entities.LabelingOrder.create({
           labeling_number:
             labelingNumber,
@@ -873,7 +1300,7 @@ export default function Labeling() {
             form.operator,
 
           status:
-            labelingOrderStatus,
+            'sedang_diproses',
 
           notes:
             form.notes,
@@ -881,15 +1308,17 @@ export default function Labeling() {
 
       /*
        * =====================================================
-       * LABEL / STICKER CONSUMPTION
+       * LABEL / STICKER CONSUMPTION — EXACT STOCK IDENTITY
        * =====================================================
        */
-
       for (const row of labelCostRows) {
         const {
           label,
+          itemType,
           quantityPerUnit,
           totalRequired,
+          freshAvailable,
+          lots,
           labelHpp,
         } = row;
 
@@ -916,71 +1345,116 @@ export default function Labeling() {
             totalRequired,
 
           stock_before:
-            Number(label.stock) || 0,
+            freshAvailable,
 
           stock_after:
-            (
-              Number(label.stock) || 0
-            ) -
+            freshAvailable -
             totalRequired,
 
           unit:
             label.unit,
         });
 
-        await recordStockMovement({
-          item_type:
-            'material',
+        let remaining =
+          totalRequired;
 
-          item_id:
-            label.material_id,
+        for (const lot of lots) {
+          if (
+            remaining <= 0
+          ) {
+            break;
+          }
 
-          item_name:
-            label.material_name,
+          const lotAvailable =
+            balanceAvailable(
+              lot
+            );
 
-          item_code:
-            label.material_code,
+          if (
+            lotAvailable <= 0
+          ) {
+            continue;
+          }
 
-          inventory_status:
-            '',
+          const consumeQty =
+            Math.min(
+              remaining,
+              lotAvailable
+            );
 
-          quantity_out:
-            totalRequired,
+          await recordStockMovement({
+            item_type:
+              itemType,
 
-          unit:
-            label.unit,
+            item_id:
+              label.material_id,
 
-          unit_cost:
-            labelHpp,
+            item_name:
+              label.material_name,
 
-          transaction_type:
-            'label_consumption',
+            item_code:
+              label.material_code,
 
-          transaction_number:
-            labelingNumber,
+            batch_id:
+              lot.batch_id || '',
 
-          reference_type:
-            'labeling',
+            batch_number:
+              lot.batch_number || '',
 
-          reference_id:
-            order.id,
+            warehouse_id:
+              lot.warehouse_id || '',
 
-          notes:
-            `Label untuk ${labelingNumber}`,
-        });
+            warehouse_name:
+              lot.warehouse_name || '',
+
+            inventory_status:
+              lot.inventory_status || '',
+
+            quantity_out:
+              consumeQty,
+
+            unit:
+              label.unit,
+
+            unit_cost:
+              labelHpp,
+
+            transaction_type:
+              'label_consumption',
+
+            transaction_number:
+              labelingNumber,
+
+            reference_type:
+              'labeling',
+
+            reference_id:
+              order.id,
+
+            notes:
+              `Label untuk ${labelingNumber}`,
+          });
+
+          remaining -=
+            consumeQty;
+        }
+
+        if (
+          remaining >
+          1e-9
+        ) {
+          throw new Error(
+            `Posting label "${label.material_name}" tidak lengkap. ` +
+            `Sisa ${remaining} belum terambil.`
+          );
+        }
       }
 
       /*
        * =====================================================
-       * READY_FOR_LABELING SOURCE OUT
+       * READY_FOR_LABELING SOURCE OUT — EXACT IDENTITY
        * =====================================================
-       *
-       * Bisa berasal dari:
-       *
-       * - bottling_output
-       * - opening_balance
        */
-
       await recordStockMovement({
         item_type:
           'product',
@@ -995,16 +1469,22 @@ export default function Labeling() {
           sourceProduct.code || '',
 
         batch_id:
-          form.batch_id,
+          freshSourceStock.batch_id ||
+          form.batch_id ||
+          '',
 
         batch_number:
-          form.batch_number,
+          freshSourceStock.batch_number ||
+          form.batch_number ||
+          '',
 
         warehouse_id:
-          sourceStock.warehouse_id || '',
+          freshSourceStock.warehouse_id ||
+          '',
 
         warehouse_name:
-          sourceStock.warehouse_name || '',
+          freshSourceStock.warehouse_name ||
+          '',
 
         inventory_status:
           'READY_FOR_LABELING',
@@ -1036,10 +1516,9 @@ export default function Labeling() {
 
       /*
        * =====================================================
-       * IDENTITY GATE OUTPUT
+       * OUTPUT IN
        * =====================================================
        */
-
       await recordStockMovement({
         item_type:
           'product',
@@ -1054,10 +1533,14 @@ export default function Labeling() {
           resultProduct.code || '',
 
         batch_id:
-          form.batch_id,
+          freshSourceStock.batch_id ||
+          form.batch_id ||
+          '',
 
         batch_number:
-          form.batch_number,
+          freshSourceStock.batch_number ||
+          form.batch_number ||
+          '',
 
         warehouse_id:
           outputWarehouse.id,
@@ -1101,43 +1584,72 @@ export default function Labeling() {
 
       /*
        * =====================================================
-       * AUDIT CREATE
+       * FINALIZE ORDER STATUS — LAST CRITICAL WRITE
        * =====================================================
+       *
+       * Order dibuat sebagai sedang_diproses. Status final baru
+       * dipasang setelah seluruh stock movement sukses.
        */
+      await base44.entities.LabelingOrder.update(
+        order.id,
+        {
+          status:
+            labelingOrderStatus,
+        }
+      );
 
-      await createAuditLog({
-        module:
-          'Labeling',
+      /*
+       * COMMIT POINT:
+       * order + material detail + all stock movements konsisten.
+       */
+      committed = true;
 
-        action:
-          !exciseRequired
-            ? sourceProduct.id === resultProduct.id
-              ? 'Selesai Non Cukai'
-              : 'Selesai Maklon Non Cukai'
-            : sourceProduct.id === resultProduct.id
-              ? 'Selesai'
-              : 'Selesai Maklon',
+      /*
+       * Audit bukan bagian dari stock transaction.
+       * Audit gagal tidak boleh membuat UI berkata posting gagal.
+       */
+      try {
+        await createAuditLog({
+          module:
+            'Labeling',
 
-        entity_type:
-          'LabelingOrder',
+          action:
+            !exciseRequired
+              ? sourceProduct.id === resultProduct.id
+                ? 'Selesai Non Cukai'
+                : 'Selesai Maklon Non Cukai'
+              : sourceProduct.id === resultProduct.id
+                ? 'Selesai'
+                : 'Selesai Maklon',
 
-        entity_id:
-          order.id,
+          entity_type:
+            'LabelingOrder',
 
-        reference_number:
-          labelingNumber,
+          entity_id:
+            order.id,
 
-        data_after: {
-          source_hpp_per_bottle:
-            hppBottlingPerBottle,
+          reference_number:
+            labelingNumber,
 
-          output_hpp_per_bottle:
-            safeHppLabeling,
+          data_after: {
+            source_hpp_per_bottle:
+              hppBottlingPerBottle,
 
-          output_inventory_status:
-            outputInventoryStatus,
-        },
-      });
+            output_hpp_per_bottle:
+              safeHppLabeling,
+
+            output_inventory_status:
+              outputInventoryStatus,
+          },
+        });
+      } catch (
+        auditError
+      ) {
+        console.warn(
+          '[LABELING AUDIT FAILED AFTER COMMIT]',
+          auditError
+        );
+      }
 
       toast({
         title:
@@ -1151,20 +1663,249 @@ export default function Labeling() {
             : `${labelingNumber} · ${sourceProduct.name} → ${resultProduct.name}`,
       });
 
-      setModalOpen(false);
+      resetDedicatedForm();
 
       await loadData();
     } catch (error) {
+      /*
+       * Jika FINALIZE timeout tetapi server sebenarnya sudah
+       * mengubah status ke status final, treat sebagai committed
+       * agar stok yang valid tidak dibalik secara keliru.
+       */
+      if (
+        order?.id &&
+        !committed
+      ) {
+        try {
+          const orderRows =
+            await base44.entities.LabelingOrder.filter({
+              id:
+                order.id,
+            });
+
+          const persistedOrder =
+            (orderRows || [])[0];
+
+          if (
+            persistedOrder?.status ===
+            labelingOrderStatus
+          ) {
+            committed = true;
+          }
+        } catch {}
+      }
+
+      /*
+       * =====================================================
+       * AUTO ROLLBACK CREATE
+       * =====================================================
+       *
+       * Rollback hanya dilakukan sebelum commit point.
+       * Ledger attempt dicari ulang dari database sehingga timeout
+       * setelah backend sebenarnya menulis tetap dapat dipulihkan.
+       */
+      if (
+        order?.id &&
+        !committed
+      ) {
+        const rollbackAttempt =
+          `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+        try {
+          const attemptRows =
+            await base44.entities.StockLedger.filter({
+              reference_id:
+                order.id,
+            });
+
+          const originals =
+            (attemptRows || [])
+              .filter(
+                row =>
+                  row.reference_type ===
+                    'labeling' &&
+                  [
+                    'label_consumption',
+                    'labeling_consumption',
+                    'labeling_output',
+                  ].includes(
+                    row.transaction_type
+                  )
+              )
+              .sort(
+                (a, b) =>
+                  ledgerTime(b) -
+                  ledgerTime(a)
+              );
+
+          const rollbackNumber =
+            `${labelingNumber || order.labeling_number}-RB`;
+
+          for (const row of originals) {
+            const quantityIn =
+              Number(
+                row.quantity_in
+              ) || 0;
+
+            const quantityOut =
+              Number(
+                row.quantity_out
+              ) || 0;
+
+            await recordStockMovement({
+              item_type:
+                row.item_type ||
+                (
+                  row.transaction_type ===
+                  'label_consumption'
+                    ? 'material'
+                    : 'product'
+                ),
+
+              item_id:
+                row.item_id,
+
+              item_code:
+                row.item_code || '',
+
+              item_name:
+                row.item_name,
+
+              batch_id:
+                row.batch_id || '',
+
+              batch_number:
+                row.batch_number || '',
+
+              warehouse_id:
+                row.warehouse_id || '',
+
+              warehouse_name:
+                row.warehouse_name || '',
+
+              inventory_status:
+                row.inventory_status || '',
+
+              quantity_in:
+                quantityOut > 0
+                  ? quantityOut
+                  : 0,
+
+              quantity_out:
+                quantityIn > 0
+                  ? quantityIn
+                  : 0,
+
+              unit:
+                row.unit || 'unit',
+
+              unit_cost:
+                Number(
+                  row.unit_cost
+                ) || 0,
+
+              transaction_type:
+                'labeling_rollback',
+
+              transaction_number:
+                rollbackNumber,
+
+              reference_type:
+                'labeling',
+
+              reference_id:
+                order.id,
+
+              notes:
+                `AUTO ROLLBACK gagal posting ${labelingNumber || order.labeling_number} · [ATTEMPT:${rollbackAttempt}]`,
+            });
+          }
+
+          const afterRollbackLedger =
+            await base44.entities.StockLedger.filter({
+              reference_id:
+                order.id,
+            });
+
+          const netRows =
+            (afterRollbackLedger || [])
+              .filter(
+                row =>
+                  row.reference_type ===
+                    'labeling' &&
+                  [
+                    'label_consumption',
+                    'labeling_consumption',
+                    'labeling_output',
+                    'labeling_rollback',
+                  ].includes(
+                    row.transaction_type
+                  )
+              );
+
+          if (
+            !movementsNetZero(
+              netRows
+            )
+          ) {
+            throw new Error(
+              'Net movement gagal posting belum kembali ke nol.'
+            );
+          }
+
+          await base44.entities.LabelingOrder.update(
+            order.id,
+            {
+              status:
+                'void',
+
+              notes:
+                [
+                  order.notes,
+                  `AUTO ROLLBACK ${new Date().toISOString()}`,
+                  `Penyebab: ${
+                    error?.message ||
+                    'critical write failed'
+                  }`,
+                ]
+                  .filter(Boolean)
+                  .join('\n'),
+            }
+          );
+
+          rollbackStatus =
+            ' Perubahan stok yang sempat terjadi sudah dibalik otomatis.';
+        } catch (
+          rollbackError
+        ) {
+          rollbackStatus =
+            ` ROLLBACK GAGAL: ${
+              rollbackError?.message ||
+              'unknown rollback error'
+            }. Order dibiarkan sedang_diproses. Jangan ulang posting sebelum StockLedger diperiksa.`;
+
+          console.error(
+            '[LABELING CREATE ROLLBACK FAILED]',
+            rollbackError
+          );
+        }
+      }
+
       toast({
         variant:
           'destructive',
 
         title:
-          'Gagal menyimpan',
+          committed
+            ? 'Labeling tersimpan, tetapi proses lanjutan UI gagal'
+            : 'Gagal menyimpan',
 
         description:
-          error?.message ||
-          'Terjadi kesalahan',
+          (
+            error?.message ||
+            'Terjadi kesalahan'
+          ) +
+          rollbackStatus,
       });
     } finally {
       setSubmitting(false);
@@ -1269,6 +2010,11 @@ export default function Labeling() {
       order.id
     );
 
+    let voidAttempt = '';
+    let reversalNumber = '';
+    let orderVoidCommitted = false;
+    let rollbackStatus = '';
+
     try {
       /*
        * =====================================================
@@ -1282,25 +2028,35 @@ export default function Labeling() {
             order.id,
         });
 
-      /*
-       * =====================================================
-       * DOUBLE VOID GUARD
-       * =====================================================
-       */
-
-      const existingReversal =
+      const reversalHistory =
         (ledgerRows || []).filter(
           row =>
             row.reference_type === 'labeling' &&
-            row.transaction_type ===
-              'labeling_reversal'
+            [
+              'labeling_reversal',
+              'labeling_reversal_rollback',
+            ].includes(
+              row.transaction_type
+            )
         );
 
+      /*
+       * Kalau pernah ada percobaan VOID gagal tetapi sudah
+       * di-rollback penuh, net movement = 0 dan retry aman.
+       *
+       * Kalau net movement tidak nol, berarti ada orphan reversal
+       * dari percobaan sebelumnya dan VOID baru diblokir.
+       */
       if (
-        existingReversal.length > 0
+        reversalHistory.length > 0 &&
+        !movementsNetZero(
+          reversalHistory
+        )
       ) {
         throw new Error(
-          'Reversal Labeling sudah pernah dibuat. Double VOID diblokir.'
+          'Ditemukan reversal Labeling sebelumnya yang belum netral. ' +
+          'VOID baru diblokir agar stok tidak makin rusak. ' +
+          'Periksa StockLedger transaksi Labeling ini terlebih dahulu.'
         );
       }
 
@@ -1665,8 +2421,11 @@ export default function Labeling() {
        * =====================================================
        */
 
-      const reversalNumber =
+      reversalNumber =
         `${order.labeling_number}-REV`;
+
+      voidAttempt =
+        `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
       /*
        * =====================================================
@@ -1760,7 +2519,7 @@ export default function Labeling() {
             order.id,
 
           notes:
-            `VOID output Labeling ${order.labeling_number} · ${voidReason}`,
+            `VOID output Labeling ${order.labeling_number} · ${voidReason} · [ATTEMPT:${voidAttempt}]`,
         });
       }
 
@@ -1845,7 +2604,7 @@ export default function Labeling() {
             order.id,
 
           notes:
-            `VOID consumption Labeling ${order.labeling_number} · ${voidReason}`,
+            `VOID consumption Labeling ${order.labeling_number} · ${voidReason} · [ATTEMPT:${voidAttempt}]`,
         });
       }
 
@@ -1921,7 +2680,7 @@ export default function Labeling() {
             order.id,
 
           notes:
-            `VOID label/stiker ${order.labeling_number} · ${voidReason}`,
+            `VOID label/stiker ${order.labeling_number} · ${voidReason} · [ATTEMPT:${voidAttempt}]`,
         });
       }
 
@@ -1952,12 +2711,16 @@ export default function Labeling() {
         }
       );
 
+      orderVoidCommitted =
+        true;
+
       /*
        * =====================================================
        * AUDIT LOG
        * =====================================================
        */
 
+      try {
       await createAuditLog({
         module:
           'Labeling',
@@ -2072,6 +2835,13 @@ export default function Labeling() {
         },
       });
 
+      } catch (auditError) {
+        console.warn(
+          '[LABELING VOID AUDIT FAILED AFTER COMMIT]',
+          auditError
+        );
+      }
+
       toast({
         title:
           'Labeling berhasil di-VOID',
@@ -2082,6 +2852,210 @@ export default function Labeling() {
 
       await loadData();
     } catch (error) {
+      /*
+       * Jika update status VOID timeout tetapi server sebenarnya
+       * sudah menyimpan status void, reversal adalah commit valid
+       * dan tidak boleh dibalik.
+       */
+      if (
+        !orderVoidCommitted &&
+        order?.id
+      ) {
+        try {
+          const orderRows =
+            await base44.entities.LabelingOrder.filter({
+              id:
+                order.id,
+            });
+
+          const persistedOrder =
+            (orderRows || [])[0];
+
+          if (
+            persistedOrder?.status ===
+            'void'
+          ) {
+            orderVoidCommitted = true;
+          }
+        } catch {}
+      }
+
+      /*
+       * =====================================================
+       * AUTO ROLLBACK VOID
+       * =====================================================
+       *
+       * Jika reversal baru sempat ditulis tetapi LabelingOrder
+       * belum berhasil berstatus VOID, semua movement percobaan
+       * ini dibalik lagi memakai identity + frozen unit_cost.
+       */
+      if (
+        !orderVoidCommitted &&
+        voidAttempt
+      ) {
+        try {
+          const attemptLedger =
+            await base44.entities.StockLedger.filter({
+              reference_id:
+                order.id,
+            });
+
+          const attemptReversalRows =
+            (attemptLedger || [])
+              .filter(
+                row =>
+                  row.reference_type ===
+                    'labeling' &&
+                  row.transaction_type ===
+                    'labeling_reversal' &&
+                  String(
+                    row.notes || ''
+                  ).includes(
+                    `[ATTEMPT:${voidAttempt}]`
+                  )
+              )
+              .sort(
+                (a, b) =>
+                  ledgerTime(b) -
+                  ledgerTime(a)
+              );
+
+          for (
+            const row of
+            attemptReversalRows
+          ) {
+            const quantityIn =
+              Number(
+                row.quantity_in
+              ) || 0;
+
+            const quantityOut =
+              Number(
+                row.quantity_out
+              ) || 0;
+
+            await recordStockMovement({
+              item_type:
+                row.item_type ||
+                'product',
+
+              item_id:
+                row.item_id,
+
+              item_code:
+                row.item_code || '',
+
+              item_name:
+                row.item_name,
+
+              batch_id:
+                row.batch_id || '',
+
+              batch_number:
+                row.batch_number || '',
+
+              warehouse_id:
+                row.warehouse_id || '',
+
+              warehouse_name:
+                row.warehouse_name || '',
+
+              inventory_status:
+                row.inventory_status || '',
+
+              quantity_in:
+                quantityOut > 0
+                  ? quantityOut
+                  : 0,
+
+              quantity_out:
+                quantityIn > 0
+                  ? quantityIn
+                  : 0,
+
+              unit:
+                row.unit || 'unit',
+
+              unit_cost:
+                Number(
+                  row.unit_cost
+                ) || 0,
+
+              transaction_type:
+                'labeling_reversal_rollback',
+
+              transaction_number:
+                `${reversalNumber}-RB`,
+
+              reference_type:
+                'labeling',
+
+              reference_id:
+                order.id,
+
+              notes:
+                `AUTO ROLLBACK VOID ${order.labeling_number} · [ATTEMPT:${voidAttempt}]`,
+            });
+          }
+
+          /*
+           * Verifikasi ulang net attempt.
+           * Ini juga menangani kasus timeout tetapi backend
+           * ternyata sudah berhasil menulis rollback.
+           */
+          const afterRollbackLedger =
+            await base44.entities.StockLedger.filter({
+              reference_id:
+                order.id,
+            });
+
+          const attemptRows =
+            (afterRollbackLedger || [])
+              .filter(
+                row =>
+                  row.reference_type ===
+                    'labeling' &&
+                  [
+                    'labeling_reversal',
+                    'labeling_reversal_rollback',
+                  ].includes(
+                    row.transaction_type
+                  ) &&
+                  String(
+                    row.notes || ''
+                  ).includes(
+                    `[ATTEMPT:${voidAttempt}]`
+                  )
+              );
+
+          if (
+            !movementsNetZero(
+              attemptRows
+            )
+          ) {
+            throw new Error(
+              'Net movement percobaan VOID belum kembali ke nol.'
+            );
+          }
+
+          rollbackStatus =
+            ' Reversal parsial sudah dikembalikan otomatis; stok kembali ke kondisi sebelum percobaan VOID.';
+        } catch (
+          rollbackError
+        ) {
+          rollbackStatus =
+            ` ROLLBACK VOID GAGAL: ${
+              rollbackError?.message ||
+              'unknown rollback error'
+            }. Jangan ulang VOID sebelum StockLedger diperiksa.`;
+
+          console.error(
+            '[LABELING VOID ROLLBACK FAILED]',
+            rollbackError
+          );
+        }
+      }
+
       toast({
         variant:
           'destructive',
@@ -2090,8 +3064,11 @@ export default function Labeling() {
           'Gagal VOID Labeling',
 
         description:
-          error?.message ||
-          'Terjadi kesalahan',
+          (
+            error?.message ||
+            'Terjadi kesalahan'
+          ) +
+          rollbackStatus,
       });
     } finally {
       setVoidingId('');
@@ -2310,62 +3287,625 @@ export default function Labeling() {
     },
   ];
 
+  const visibleLabels = useMemo(() => {
+    const query =
+      labelSearch
+        .trim()
+        .toLowerCase();
+
+    if (query) {
+      return (form.labels || []).filter(
+        label =>
+          String(
+            label.material_name || ''
+          )
+            .toLowerCase()
+            .includes(query) ||
+          String(
+            label.material_code || ''
+          )
+            .toLowerCase()
+            .includes(query)
+      );
+    }
+
+    if (
+      showAllLabels ||
+      !form.labeling_mode
+    ) {
+      return form.labels || [];
+    }
+
+    return recommendedLabels;
+  }, [
+    form.labels,
+    form.labeling_mode,
+    labelSearch,
+    recommendedLabels,
+    showAllLabels,
+  ]);
+
   return (
-    <div className="p-5 max-w-[1400px] mx-auto">
+    <div className="p-5 max-w-[1500px] mx-auto space-y-5">
       <PageHeader
         title="Labeling"
-
-        description="Labeling = identity gate. Produk sumber READY_FOR_LABELING dapat tetap menjadi produk asal atau berubah menjadi produk/merk lain untuk maklon."
-
-        actions={
-          <Button
-            onClick={
-              openAdd
-            }
-
-            size="sm"
-
-            className="gap-1.5"
-
-            disabled={
-              submitting ||
-              !!voidingId
-            }
-          >
-            <Plus className="w-4 h-4" />
-            Labeling Baru
-          </Button>
-        }
+        description="Dedicated labeling. Pilih batch, tentukan mode IZZI atau MAKLON, lalu pilih produk hasil dan label/stiker yang sesuai."
       />
 
-      <DataTable
-        columns={
-          columns
-        }
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-5 items-start">
+        <div className="bg-white border rounded-xl p-4 sm:p-5 space-y-5">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="font-semibold">
+                Form Labeling
+              </h2>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Tidak menggunakan popup. Posting stock/HPP tetap memakai engine Labeling yang sama.
+              </p>
+            </div>
 
-        data={
-          data
-        }
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              onClick={resetDedicatedForm}
+              disabled={submitting || !!voidingId}
+            >
+              <RotateCcw className="w-4 h-4" />
+              Reset Form
+            </Button>
+          </div>
 
-        loading={
-          loading
-        }
+          <div>
+            <Label className="text-[12.5px] mb-1">
+              Batch Siap Labeling *
+            </Label>
 
-        emptyMessage="Belum ada labeling"
+            <Select
+              value={form.stock_id}
+              onValueChange={onStockChange}
+              disabled={submitting}
+            >
+              <SelectTrigger className="h-10 text-[13px]">
+                <SelectValue placeholder="Pilih batch siap labeling" />
+              </SelectTrigger>
 
-        searchKeys={[
-          'labeling_number',
-          'product_name',
-          'brand_name',
-          'batch_number',
-        ]}
+              <SelectContent>
+                {siapLabelStock.map(stock => {
+                  const product =
+                    products.find(
+                      item =>
+                        item.id ===
+                        stock.item_id
+                    );
 
-        searchPlaceholder="Cari labeling..."
-      />
+                  return (
+                    <SelectItem
+                      key={stock.id}
+                      value={stock.id}
+                    >
+                      {getInventoryDisplayName(
+                        product?.name ||
+                          stock.item_name,
+                        'READY_FOR_LABELING'
+                      )}
+                      {' '}
+                      ({stock.available_quantity} unit)
+                      {stock.batch_number
+                        ? ` · ${stock.batch_number}`
+                        : ''}
+                    </SelectItem>
+                  );
+                })}
+              </SelectContent>
+            </Select>
+          </div>
 
-      {/* =====================================================
-          VIEW LABELING DETAIL — READ ONLY
-         ===================================================== */}
+          <div>
+            <Label className="text-[12.5px] mb-2">
+              Mode Labeling *
+            </Label>
+
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() =>
+                  onModeChange('izzi')
+                }
+                disabled={
+                  !form.stock_id ||
+                  submitting
+                }
+                className={`rounded-xl border p-3 text-left transition ${
+                  form.labeling_mode === 'izzi'
+                    ? 'border-primary bg-primary/5 ring-1 ring-primary'
+                    : 'hover:bg-muted/30'
+                } disabled:opacity-50 disabled:cursor-not-allowed`}
+              >
+                <div className="flex items-center gap-2 font-semibold">
+                  <Tags className="w-4 h-4" />
+                  IZZI
+                </div>
+                <div className="text-[11px] text-muted-foreground mt-1">
+                  Merk IZZI dan label yang mirip dengan produk/batch diprioritaskan.
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  onModeChange('maklon')
+                }
+                disabled={
+                  !form.stock_id ||
+                  submitting
+                }
+                className={`rounded-xl border p-3 text-left transition ${
+                  form.labeling_mode === 'maklon'
+                    ? 'border-primary bg-primary/5 ring-1 ring-primary'
+                    : 'hover:bg-muted/30'
+                } disabled:opacity-50 disabled:cursor-not-allowed`}
+              >
+                <div className="flex items-center gap-2 font-semibold">
+                  <Factory className="w-4 h-4" />
+                  MAKLON
+                </div>
+                <div className="text-[11px] text-muted-foreground mt-1">
+                  Pilih merk hasil; label diprioritaskan dari merk + kemiripan produk/batch.
+                </div>
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <Label className="text-[12.5px] mb-1">
+                Produk Sumber
+              </Label>
+              <Input
+                value={form.source_product_name}
+                disabled
+                className="h-9 text-[13px] bg-muted/40"
+              />
+            </div>
+
+            <div>
+              <Label className="text-[12.5px] mb-1">
+                Batch
+              </Label>
+              <Input
+                value={form.batch_number}
+                disabled
+                className="h-9 text-[13px] bg-muted/40"
+              />
+            </div>
+
+            <div>
+              <Label className="text-[12.5px] mb-1">
+                Merk Hasil *
+              </Label>
+
+              <Select
+                value={form.result_brand_id}
+                onValueChange={onResultBrandChange}
+                disabled={
+                  !form.labeling_mode ||
+                  submitting
+                }
+              >
+                <SelectTrigger className="h-9 text-[13px]">
+                  <SelectValue
+                    placeholder={
+                      !form.labeling_mode
+                        ? 'Pilih mode dulu'
+                        : form.labeling_mode === 'izzi'
+                          ? 'Pilih merk IZZI'
+                          : 'Pilih merk maklon'
+                    }
+                  />
+                </SelectTrigger>
+
+                <SelectContent>
+                  {availableResultBrands.map(
+                    brand => (
+                      <SelectItem
+                        key={brand.id}
+                        value={brand.id}
+                      >
+                        {brand.name}
+                      </SelectItem>
+                    )
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
+              <Label className="text-[12.5px] mb-1">
+                Produk Hasil Labeling *
+              </Label>
+
+              <Select
+                value={form.result_product_id}
+                onValueChange={onResultProductChange}
+                disabled={
+                  !form.result_brand_id ||
+                  submitting
+                }
+              >
+                <SelectTrigger className="h-9 text-[13px]">
+                  <SelectValue
+                    placeholder={
+                      form.result_brand_id
+                        ? 'Pilih produk hasil'
+                        : 'Pilih merk hasil dulu'
+                    }
+                  />
+                </SelectTrigger>
+
+                <SelectContent>
+                  {resultProducts.map(
+                    product => (
+                      <SelectItem
+                        key={product.id}
+                        value={product.id}
+                      >
+                        {product.name}
+                        {product.bottle_size
+                          ? ` · ${product.bottle_size}ml`
+                          : ''}
+                      </SelectItem>
+                    )
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
+              <Label className="text-[12.5px] mb-1">
+                Stok Tersedia (unit)
+              </Label>
+              <Input
+                value={form.available_qty}
+                disabled
+                className="h-9 text-[13px] bg-muted/40"
+              />
+            </div>
+
+            <div>
+              <Label className="text-[12.5px] mb-1">
+                Jumlah Dilabeli *
+              </Label>
+              <NumberInput
+                value={form.quantity}
+                onChange={value =>
+                  setForm(current => ({
+                    ...current,
+                    quantity: value,
+                  }))
+                }
+                allowDecimal={false}
+                min={0}
+                className="h-9 text-[13px]"
+              />
+            </div>
+
+            <div>
+              <Label className="text-[12.5px] mb-1">
+                Tanggal
+              </Label>
+              <Input
+                type="date"
+                value={form.labeling_date}
+                onChange={event =>
+                  setForm(current => ({
+                    ...current,
+                    labeling_date:
+                      event.target.value,
+                  }))
+                }
+                className="h-9 text-[13px]"
+              />
+            </div>
+
+            <div>
+              <Label className="text-[12.5px] mb-1">
+                Operator *
+              </Label>
+              <Input
+                value={form.operator}
+                onChange={event =>
+                  setForm(current => ({
+                    ...current,
+                    operator:
+                      event.target.value,
+                  }))
+                }
+                className="h-9 text-[13px]"
+              />
+            </div>
+          </div>
+
+          <div>
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+              <div>
+                <Label className="text-[12.5px]">
+                  Label / Stiker *
+                </Label>
+                {form.labeling_mode && (
+                  <div className="text-[11px] text-muted-foreground mt-0.5">
+                    {recommendedLabels.length > 0
+                      ? `${recommendedLabels.length} rekomendasi sesuai batch/produk`
+                      : 'Belum ada label yang cocok otomatis. Gunakan pencarian atau tampilkan semua.'}
+                  </div>
+                )}
+              </div>
+
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  setShowAllLabels(
+                    current => !current
+                  )
+                }
+                disabled={!form.labeling_mode}
+              >
+                {showAllLabels
+                  ? 'Tampilkan Rekomendasi'
+                  : 'Tampilkan Semua Label'}
+              </Button>
+            </div>
+
+            <Input
+              value={labelSearch}
+              onChange={event =>
+                setLabelSearch(
+                  event.target.value
+                )
+              }
+              onKeyDown={event => {
+                if (
+                  event.key === 'Enter'
+                ) {
+                  event.preventDefault();
+                }
+              }}
+              placeholder="Cari nama/kode label/stiker..."
+              className="h-9 text-[12px] mb-2"
+            />
+
+            <div className="space-y-1.5 max-h-64 overflow-auto border border-border rounded-lg p-2">
+              {visibleLabels.length === 0 ? (
+                <p className="text-[11px] text-muted-foreground text-center py-5">
+                  {!form.labeling_mode
+                    ? 'Pilih mode IZZI atau MAKLON terlebih dahulu.'
+                    : 'Tidak ada label yang cocok. Gunakan pencarian atau Tampilkan Semua Label.'}
+                </p>
+              ) : (
+                visibleLabels.map(label => {
+                  const index =
+                    form.labels.findIndex(
+                      item =>
+                        item.material_id ===
+                        label.material_id
+                    );
+
+                  const recommended =
+                    recommendedLabels.some(
+                      item =>
+                        item.material_id ===
+                        label.material_id
+                    );
+
+                  return (
+                    <div
+                      key={label.material_id}
+                      className={`flex items-center gap-2 border rounded px-2 py-2 ${
+                        recommended
+                          ? 'border-primary/30 bg-primary/5'
+                          : 'border-border bg-muted/10'
+                      }`}
+                    >
+                      <Checkbox
+                        checked={label.checked}
+                        onCheckedChange={value =>
+                          updateLabel(
+                            index,
+                            {
+                              checked: value,
+                            }
+                          )
+                        }
+                      />
+
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[12.5px] font-medium truncate">
+                          {label.material_name}
+                        </div>
+                        <div className="text-[11px] text-muted-foreground">
+                          Stok: {label.stock} {label.unit}
+                          {recommended
+                            ? ' · Disarankan'
+                            : ''}
+                        </div>
+                      </div>
+
+                      <div className="w-24">
+                        <NumberInput
+                          value={label.quantity_per_unit}
+                          onChange={value =>
+                            updateLabel(
+                              index,
+                              {
+                                quantity_per_unit:
+                                  value,
+                              }
+                            )
+                          }
+                          allowDecimal
+                          min={0}
+                          disabled={!label.checked}
+                          className="h-8 text-[12px]"
+                        />
+                      </div>
+
+                      <span className="text-[11px] text-muted-foreground">
+                        /unit
+                      </span>
+
+                      <span className="text-[11px] tabular-nums w-20 text-right">
+                        Butuh:{' '}
+                        {label.checked
+                          ? (
+                              Number(
+                                form.quantity
+                              ) || 0
+                            ) *
+                            (
+                              Number(
+                                label.quantity_per_unit
+                              ) || 0
+                            )
+                          : 0}
+                      </span>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          <div>
+            <Label className="text-[12.5px] mb-1">
+              Catatan
+            </Label>
+            <Textarea
+              value={form.notes}
+              onChange={event =>
+                setForm(current => ({
+                  ...current,
+                  notes:
+                    event.target.value,
+                }))
+              }
+              rows={2}
+              className="text-[13px]"
+            />
+          </div>
+
+          <div className="flex justify-end">
+            <Button
+              type="button"
+              onClick={handleSubmit}
+              disabled={
+                submitting ||
+                !!voidingId
+              }
+              className="min-w-40"
+            >
+              {submitting
+                ? 'Memproses...'
+                : 'Proses Labeling'}
+            </Button>
+          </div>
+        </div>
+
+        <div className="bg-white border rounded-xl p-4 space-y-3 xl:sticky xl:top-4">
+          <div>
+            <div className="font-semibold">
+              Ringkasan Batch
+            </div>
+            <div className="text-xs text-muted-foreground">
+              Identity yang akan diposting.
+            </div>
+          </div>
+
+          <div className="space-y-2 text-sm">
+            <div className="border rounded-lg p-3">
+              <div className="text-[11px] text-muted-foreground">
+                Mode
+              </div>
+              <div className="font-semibold mt-1">
+                {form.labeling_mode
+                  ? form.labeling_mode.toUpperCase()
+                  : '—'}
+              </div>
+            </div>
+
+            <div className="border rounded-lg p-3">
+              <div className="text-[11px] text-muted-foreground">
+                Produk Sumber
+              </div>
+              <div className="font-medium mt-1">
+                {form.source_product_name || '—'}
+              </div>
+              <div className="font-mono text-xs mt-1 text-muted-foreground">
+                {form.batch_number || '—'}
+              </div>
+            </div>
+
+            <div className="border rounded-lg p-3">
+              <div className="text-[11px] text-muted-foreground">
+                Produk Hasil
+              </div>
+              <div className="font-medium mt-1">
+                {form.result_product_name || '—'}
+              </div>
+              <div className="text-xs mt-1 text-muted-foreground">
+                {form.result_brand_name || '—'}
+              </div>
+            </div>
+
+            <div className="border rounded-lg p-3">
+              <div className="text-[11px] text-muted-foreground">
+                Qty
+              </div>
+              <div className="font-semibold tabular-nums mt-1">
+                {Number(form.quantity || 0)} unit
+              </div>
+            </div>
+
+            <div className="border rounded-lg p-3">
+              <div className="text-[11px] text-muted-foreground">
+                Label Dipilih
+              </div>
+              <div className="font-semibold mt-1">
+                {
+                  (form.labels || []).filter(
+                    label =>
+                      label.checked
+                  ).length
+                }
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-white border rounded-xl p-4">
+        <div className="font-semibold mb-3">
+          Riwayat Labeling
+        </div>
+
+        <DataTable
+          columns={columns}
+          data={data}
+          loading={loading}
+          emptyMessage="Belum ada labeling"
+          searchKeys={[
+            'labeling_number',
+            'product_name',
+            'brand_name',
+            'batch_number',
+          ]}
+          searchPlaceholder="Cari labeling..."
+        />
+      </div>
+
+      {/* VIEW DETAIL tetap modal karena READ ONLY, bukan form transaksi. */}
       {viewOpen && (
         <div
           className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
@@ -2382,7 +3922,6 @@ export default function Labeling() {
                 <h2 className="text-base font-semibold">
                   Detail Labeling
                 </h2>
-
                 <div className="text-xs text-muted-foreground mt-0.5">
                   {viewOrder?.labeling_number || '—'}
                 </div>
@@ -2405,11 +3944,8 @@ export default function Labeling() {
                     <div className="text-[11px] text-muted-foreground uppercase">
                       Status
                     </div>
-
                     <div className="mt-1">
-                      <StatusBadge
-                        status={viewOrder.status}
-                      />
+                      <StatusBadge status={viewOrder.status} />
                     </div>
                   </div>
 
@@ -2417,7 +3953,6 @@ export default function Labeling() {
                     <div className="text-[11px] text-muted-foreground uppercase">
                       Tanggal
                     </div>
-
                     <div className="text-sm font-medium mt-1">
                       {viewOrder.labeling_date || '—'}
                     </div>
@@ -2425,89 +3960,37 @@ export default function Labeling() {
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="border rounded-lg p-3">
-                    <div className="text-[11px] text-muted-foreground">
-                      No. Labeling
-                    </div>
-
-                    <div className="font-mono font-medium mt-1">
-                      {viewOrder.labeling_number || '—'}
-                    </div>
-                  </div>
-
-                  <div className="border rounded-lg p-3">
-                    <div className="text-[11px] text-muted-foreground">
-                      Batch
-                    </div>
-
-                    <div className="font-mono font-medium mt-1">
-                      {viewOrder.batch_number || '—'}
-                    </div>
-                  </div>
-
-                  <div className="border rounded-lg p-3">
-                    <div className="text-[11px] text-muted-foreground">
-                      Produk Hasil
-                    </div>
-
-                    <div className="font-medium mt-1">
-                      {viewOrder.product_name || '—'}
-                    </div>
-                  </div>
-
-                  <div className="border rounded-lg p-3">
-                    <div className="text-[11px] text-muted-foreground">
-                      Merk Hasil
-                    </div>
-
-                    <div className="font-medium mt-1">
-                      {viewOrder.brand_name || '—'}
-                    </div>
-                  </div>
-
-                  <div className="border rounded-lg p-3">
-                    <div className="text-[11px] text-muted-foreground">
-                      Bottle Size
-                    </div>
-
-                    <div className="font-medium mt-1">
-                      {viewOrder.bottle_size
+                  {[
+                    ['No. Labeling', viewOrder.labeling_number],
+                    ['Batch', viewOrder.batch_number],
+                    ['Produk Hasil', viewOrder.product_name],
+                    ['Merk Hasil', viewOrder.brand_name],
+                    [
+                      'Bottle Size',
+                      viewOrder.bottle_size
                         ? `${viewOrder.bottle_size} ml`
-                        : '—'}
+                        : '—',
+                    ],
+                    ['Jumlah', `${viewOrder.quantity || 0} unit`],
+                    ['Operator', viewOrder.operator],
+                    [
+                      'Label Utama',
+                      viewOrder.label_item_name ||
+                        viewOrder.label_type,
+                    ],
+                  ].map(([label, value]) => (
+                    <div
+                      key={label}
+                      className="border rounded-lg p-3"
+                    >
+                      <div className="text-[11px] text-muted-foreground">
+                        {label}
+                      </div>
+                      <div className="font-medium mt-1">
+                        {value || '—'}
+                      </div>
                     </div>
-                  </div>
-
-                  <div className="border rounded-lg p-3">
-                    <div className="text-[11px] text-muted-foreground">
-                      Jumlah
-                    </div>
-
-                    <div className="font-semibold tabular-nums mt-1">
-                      {viewOrder.quantity || 0} unit
-                    </div>
-                  </div>
-
-                  <div className="border rounded-lg p-3">
-                    <div className="text-[11px] text-muted-foreground">
-                      Operator
-                    </div>
-
-                    <div className="font-medium mt-1">
-                      {viewOrder.operator || '—'}
-                    </div>
-                  </div>
-
-                  <div className="border rounded-lg p-3">
-                    <div className="text-[11px] text-muted-foreground">
-                      Label Utama
-                    </div>
-
-                    <div className="font-medium mt-1">
-                      {viewOrder.label_item_name ||
-                        viewOrder.label_type ||
-                        '—'}
-                    </div>
-                  </div>
+                  ))}
                 </div>
 
                 <div>
@@ -2525,26 +4008,15 @@ export default function Labeling() {
                     </div>
                   ) : (
                     <div className="border rounded-lg overflow-hidden">
-                      <div className="grid grid-cols-[1fr_80px_100px] gap-2 px-3 py-2 bg-muted/40 text-[11px] font-medium text-muted-foreground">
-                        <div>Label / Stiker</div>
-                        <div className="text-right">
-                          Per Unit
-                        </div>
-                        <div className="text-right">
-                          Total
-                        </div>
-                      </div>
-
                       {viewMaterials.map(material => (
                         <div
                           key={material.id}
-                          className="grid grid-cols-[1fr_80px_100px] gap-2 px-3 py-2.5 border-t text-sm"
+                          className="grid grid-cols-[1fr_80px_100px] gap-2 px-3 py-2.5 border-t first:border-t-0 text-sm"
                         >
                           <div>
                             <div className="font-medium">
                               {material.label_item_name || '—'}
                             </div>
-
                             {material.label_item_code && (
                               <div className="text-[11px] text-muted-foreground">
                                 {material.label_item_code}
@@ -2570,7 +4042,6 @@ export default function Labeling() {
                   <div className="text-sm font-semibold mb-2">
                     Catatan
                   </div>
-
                   <div className="border rounded-lg px-3 py-3 text-sm whitespace-pre-wrap min-h-[48px]">
                     {viewOrder.notes || '—'}
                   </div>
@@ -2580,548 +4051,6 @@ export default function Labeling() {
           </div>
         </div>
       )}
-
-      <FormModal
-        open={
-          modalOpen
-        }
-
-        onClose={() =>
-          setModalOpen(false)
-        }
-
-        title="Labeling Baru"
-
-        onSubmit={
-          handleSubmit
-        }
-
-        submitting={
-          submitting
-        }
-
-        submitLabel="Proses Labeling"
-
-        size="lg"
-      >
-        <div>
-          <Label className="text-[12.5px] mb-1">
-            Batch Siap Labeling *
-          </Label>
-
-          <Select
-            value={
-              form.stock_id
-            }
-
-            onValueChange={
-              onStockChange
-            }
-          >
-            <SelectTrigger className="h-9 text-[13px]">
-              <SelectValue placeholder="Pilih batch siap labeling" />
-            </SelectTrigger>
-
-            <SelectContent>
-              {siapLabelStock.map(
-                stock => {
-                  const product =
-                    products.find(
-                      item =>
-                        item.id ===
-                        stock.item_id
-                    );
-
-                  return (
-                    <SelectItem
-                      key={
-                        stock.id
-                      }
-
-                      value={
-                        stock.id
-                      }
-                    >
-                      {getInventoryDisplayName(
-                        product?.name ||
-                          stock.item_name,
-
-                        'READY_FOR_LABELING'
-                      )}
-
-                      {' '}
-
-                      (
-                      {stock.available_quantity}
-                      {' '}
-                      unit
-                      )
-
-                      {stock.batch_number
-                        ? ` · ${stock.batch_number}`
-                        : ''}
-                    </SelectItem>
-                  );
-                }
-              )}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <Label className="text-[12.5px] mb-1">
-              Produk Sumber
-            </Label>
-
-            <Input
-              value={
-                form.source_product_name
-              }
-
-              disabled
-
-              className="h-9 text-[13px] bg-muted/40"
-            />
-          </div>
-
-          <div>
-            <Label className="text-[12.5px] mb-1">
-              Merk Hasil *
-            </Label>
-
-            <Select
-              value={
-                form.result_brand_id
-              }
-
-              onValueChange={
-                onResultBrandChange
-              }
-            >
-              <SelectTrigger className="h-9 text-[13px]">
-                <SelectValue placeholder="Pilih merk hasil" />
-              </SelectTrigger>
-
-              <SelectContent>
-                {brands.map(
-                  brand => (
-                    <SelectItem
-                      key={
-                        brand.id
-                      }
-
-                      value={
-                        brand.id
-                      }
-                    >
-                      {brand.name}
-                    </SelectItem>
-                  )
-                )}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div>
-            <Label className="text-[12.5px] mb-1">
-              Produk Hasil Labeling *
-            </Label>
-
-            <Select
-              value={
-                form.result_product_id
-              }
-
-              onValueChange={
-                onResultProductChange
-              }
-
-              disabled={
-                !form.result_brand_id
-              }
-            >
-              <SelectTrigger className="h-9 text-[13px]">
-                <SelectValue
-                  placeholder={
-                    form.result_brand_id
-                      ? 'Pilih produk hasil'
-                      : 'Pilih merk hasil dulu'
-                  }
-                />
-              </SelectTrigger>
-
-              <SelectContent>
-                {resultProducts.map(
-                  product => (
-                    <SelectItem
-                      key={
-                        product.id
-                      }
-
-                      value={
-                        product.id
-                      }
-                    >
-                      {product.name}
-
-                      {product.bottle_size
-                        ? ` · ${product.bottle_size}ml`
-                        : ''}
-                    </SelectItem>
-                  )
-                )}
-
-                {form.result_brand_id &&
-                  resultProducts.length ===
-                    0 && (
-                    <div className="px-2 py-2 text-[11px] text-amber-600">
-                      Tidak ada Product aktif yang memiliki brand_id merk ini.
-                      Periksa relasi Brand → Product di Master Barang.
-                    </div>
-                  )}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div>
-            <Label className="text-[12.5px] mb-1">
-              Batch
-            </Label>
-
-            <Input
-              value={
-                form.batch_number
-              }
-
-              disabled
-
-              className="h-9 text-[13px] bg-muted/40"
-            />
-          </div>
-
-          <div>
-            <Label className="text-[12.5px] mb-1">
-              Stok Tersedia (unit)
-            </Label>
-
-            <Input
-              value={
-                form.available_qty
-              }
-
-              disabled
-
-              className="h-9 text-[13px] bg-muted/40"
-            />
-          </div>
-
-          <div>
-            <Label className="text-[12.5px] mb-1">
-              Jumlah Dilabeli *
-            </Label>
-
-            <NumberInput
-              value={
-                form.quantity
-              }
-
-              onChange={
-                value =>
-                  setForm(
-                    current => ({
-                      ...current,
-
-                      quantity:
-                        value,
-                    })
-                  )
-              }
-
-              allowDecimal={
-                false
-              }
-
-              min={
-                0
-              }
-
-              className="h-9 text-[13px]"
-            />
-          </div>
-
-          <div>
-            <Label className="text-[12.5px] mb-1">
-              Tanggal
-            </Label>
-
-            <Input
-              type="date"
-
-              value={
-                form.labeling_date
-              }
-
-              onChange={
-                event =>
-                  setForm(
-                    current => ({
-                      ...current,
-
-                      labeling_date:
-                        event.target.value,
-                    })
-                  )
-              }
-
-              className="h-9 text-[13px]"
-            />
-          </div>
-        </div>
-
-        <div>
-          <Label className="text-[12.5px] mb-1">
-            Label / Stiker
-          </Label>
-
-          {form.labels.length ===
-            0 && (
-            <p className="text-[11px] text-amber-600">
-              Belum ada barang tipe Label/Stiker.
-              Tambahkan di Master Barang.
-            </p>
-          )}
-
-          <Input
-            value={
-              labelSearch
-            }
-
-            onChange={
-              event =>
-                setLabelSearch(
-                  event.target.value
-                )
-            }
-
-            onKeyDown={
-              event => {
-                if (
-                  event.key ===
-                  'Enter'
-                ) {
-                  event.preventDefault();
-                }
-              }
-            }
-
-            placeholder="Cari nama/kode label/stiker..."
-
-            className="h-8 text-[12px] mb-2"
-          />
-
-          <div className="space-y-1.5 max-h-52 overflow-auto border border-border rounded p-2">
-            {(() => {
-              const query =
-                labelSearch
-                  .trim()
-                  .toLowerCase();
-
-              const filtered =
-                form.labels.filter(
-                  label =>
-                    !query ||
-                    String(
-                      label.material_name ||
-                      ''
-                    )
-                      .toLowerCase()
-                      .includes(
-                        query
-                      ) ||
-                    String(
-                      label.material_code ||
-                      ''
-                    )
-                      .toLowerCase()
-                      .includes(
-                        query
-                      )
-                );
-
-              if (
-                !filtered.length
-              ) {
-                return (
-                  <p className="text-[11px] text-muted-foreground text-center py-3">
-                    {form.labels.length
-                      ? 'Tidak ditemukan.'
-                      : 'Belum ada data.'}
-                  </p>
-                );
-              }
-
-              return filtered.map(
-                label => {
-                  const index =
-                    form.labels.findIndex(
-                      item =>
-                        item.material_id ===
-                        label.material_id
-                    );
-
-                  return (
-                    <div
-                      key={
-                        label.material_id
-                      }
-
-                      className="flex items-center gap-2 border border-border rounded px-2 py-1.5 bg-muted/10"
-                    >
-                      <Checkbox
-                        checked={
-                          label.checked
-                        }
-
-                        onCheckedChange={
-                          value =>
-                            updateLabel(
-                              index,
-                              {
-                                checked:
-                                  value,
-                              }
-                            )
-                        }
-                      />
-
-                      <div className="flex-1 min-w-0">
-                        <div className="text-[12.5px] font-medium truncate">
-                          {label.material_name}
-                        </div>
-
-                        <div className="text-[11px] text-muted-foreground">
-                          Stok:{' '}
-                          {label.stock}{' '}
-                          {label.unit}
-                        </div>
-                      </div>
-
-                      <div className="w-24">
-                        <NumberInput
-                          value={
-                            label.quantity_per_unit
-                          }
-
-                          onChange={
-                            value =>
-                              updateLabel(
-                                index,
-                                {
-                                  quantity_per_unit:
-                                    value,
-                                }
-                              )
-                          }
-
-                          allowDecimal
-
-                          min={
-                            0
-                          }
-
-                          disabled={
-                            !label.checked
-                          }
-
-                          className="h-8 text-[12px]"
-                        />
-                      </div>
-
-                      <span className="text-[11px] text-muted-foreground">
-                        /unit
-                      </span>
-
-                      <span className="text-[11px] tabular-nums w-20 text-right">
-                        Butuh:{' '}
-
-                        {label.checked
-                          ? (
-                              Number(
-                                form.quantity
-                              ) || 0
-                            ) *
-                            (
-                              Number(
-                                label.quantity_per_unit
-                              ) || 0
-                            )
-                          : 0}
-                      </span>
-                    </div>
-                  );
-                }
-              );
-            })()}
-          </div>
-        </div>
-
-        <div>
-          <Label className="text-[12.5px] mb-1">
-            Operator *
-          </Label>
-
-          <Input
-            value={
-              form.operator
-            }
-
-            onChange={
-              event =>
-                setForm(
-                  current => ({
-                    ...current,
-
-                    operator:
-                      event.target.value,
-                  })
-                )
-            }
-
-            className="h-9 text-[13px]"
-          />
-        </div>
-
-        <div>
-          <Label className="text-[12.5px] mb-1">
-            Catatan
-          </Label>
-
-          <Textarea
-            value={
-              form.notes
-            }
-
-            onChange={
-              event =>
-                setForm(
-                  current => ({
-                    ...current,
-
-                    notes:
-                      event.target.value,
-                  })
-                )
-            }
-
-            rows={
-              2
-            }
-
-            className="text-[13px]"
-          />
-        </div>
-      </FormModal>
     </div>
   );
 }
