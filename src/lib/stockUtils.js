@@ -1,7 +1,37 @@
 import { base44 } from '@/api/base44Client';
 
 /**
+ * Stock identity helper.
+ *
+ * IMPORTANT:
+ * StockBalance adalah entitas stok terpisah berdasarkan:
+ * item + batch + gudang + stage.
+ *
+ * Jangan pernah mengambil balances[0] dari query parsial,
+ * karena stok tanpa batch dapat bercampur dengan stok batch lain.
+ */
+const stockIdentityKey = ({
+  batch_id = '',
+  batch_number = '',
+  warehouse_id = '',
+  warehouse_name = '',
+  inventory_status = '',
+}) => {
+  const batchKey =
+    String(batch_id || batch_number || '').trim();
+
+  const warehouseKey =
+    String(warehouse_id || warehouse_name || '').trim();
+
+  const stageKey =
+    String(inventory_status || '').trim();
+
+  return `${batchKey}|${warehouseKey}|${stageKey}`;
+};
+
+/**
  * Record a stock movement:
+ * - resolve exact target StockBalance
  * - validate target StockBalance first
  * - create StockLedger
  * - update/create StockBalance
@@ -57,47 +87,76 @@ export async function recordStockMovement({
 
   /**
    * ============================================================
-   * RESOLVE STOCK BALANCE
+   * RESOLVE EXACT STOCK BALANCE
    * ============================================================
    *
-   * Unique balance key:
+   * BUG FIX:
    *
-   * item_id
-   * + batch_id
-   * + warehouse_id
-   * + inventory_status
+   * Versi lama membuat filter parsial:
+   * item_id + optional batch_id + optional warehouse_id + stage
    *
-   * inventory_status memisahkan:
-   * BULK
-   * READY_FOR_LABELING
-   * UNEXCISED
-   * READY_FOR_SALE
+   * Jika batch_id kosong, filter batch tidak dikirim sama sekali.
+   * Akibatnya:
    *
-   * Material lama tetap bisa memakai inventory_status kosong.
+   * SAMPLE tanpa batch = 33
+   * SAMPLE batch A      = 17
+   *
+   * dapat kembali dalam query yang sama lalu balances[0] dipakai.
+   * Bila row pertama saldo 0, transaksi gagal walaupun row tanpa batch
+   * sebenarnya masih memiliki stok 33.
+   *
+   * Sekarang kandidat diambil berdasarkan item_id, lalu dipilih dengan
+   * EXACT identity:
+   *
+   * batch + warehouse + inventory_status.
    */
-  const filter = {
-    item_id,
-  };
 
-  if (batch_id) {
-    filter.batch_id = batch_id;
+  const candidates =
+    await base44.entities.StockBalance.filter({
+      item_id,
+    });
+
+  const targetIdentity =
+    stockIdentityKey({
+      batch_id,
+      batch_number,
+      warehouse_id,
+      warehouse_name,
+      inventory_status,
+    });
+
+  const exactBalances =
+    (candidates || []).filter(candidate => {
+      if (
+        item_type &&
+        candidate.item_type &&
+        candidate.item_type !== item_type
+      ) {
+        return false;
+      }
+
+      return (
+        stockIdentityKey(candidate) ===
+        targetIdentity
+      );
+    });
+
+  /**
+   * Duplicate exact StockBalance seharusnya tidak terjadi.
+   * Jangan diam-diam pilih balances[0], karena dapat merusak stok.
+   */
+  if (exactBalances.length > 1) {
+    throw new Error(
+      `Ditemukan duplicate StockBalance untuk ${item_name}. ` +
+      `Batch: ${batch_number || 'TANPA BATCH'}, ` +
+      `Gudang: ${warehouse_name || 'TANPA GUDANG'}, ` +
+      `Stage: ${inventory_status || 'TANPA STAGE'}. ` +
+      `Transaksi diblokir agar stok tidak salah potong.`
+    );
   }
-
-  if (warehouse_id) {
-    filter.warehouse_id = warehouse_id;
-  }
-
-  if (inventory_status) {
-    filter.inventory_status = inventory_status;
-  }
-
-  const balances =
-    await base44.entities.StockBalance.filter(filter);
 
   const balance =
-    balances.length > 0
-      ? balances[0]
-      : null;
+    exactBalances[0] || null;
 
   const currentQty =
     Number(balance?.quantity) || 0;
@@ -112,16 +171,6 @@ export async function recordStockMovement({
    * ============================================================
    * PRE-VALIDATION
    * ============================================================
-   *
-   * PATCH:
-   * Validasi stok dilakukan SEBELUM StockLedger.create().
-   *
-   * Sebelumnya:
-   *
-   * Ledger dibuat
-   * → baru cek balance
-   * → transaksi gagal
-   * → ledger palsu tertinggal.
    */
   if (newQty < 0) {
     throw new Error(
@@ -221,11 +270,10 @@ export async function recordStockMovement({
   }
 
   /**
-   * Tidak ada balance sebelumnya.
+   * Tidak ada EXACT balance sebelumnya.
    *
-   * Karena pre-validation sudah dilakukan,
-   * hanya transaksi dengan qty final >= 0
-   * yang dapat mencapai bagian ini.
+   * Untuk OUT, pre-validation di atas sudah memblokir karena currentQty = 0.
+   * Untuk IN, aman membuat StockBalance identity baru.
    */
   const createdBalance =
     await base44.entities.StockBalance.create({
