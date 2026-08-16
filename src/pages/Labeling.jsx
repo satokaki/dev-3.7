@@ -510,60 +510,127 @@ export default function Labeling() {
 
   /*
    * v3.7 UI ONLY — MAKLON RESULT PRODUCT RECOMMENDATION
-   * Produk hasil diprioritaskan berdasarkan kemiripan nama produk sumber/BOTL.
-   * Brand/prefix teknis diabaikan saat matching. Tidak auto-select.
+   *
+   * Urutan matching:
+   * 1. Varian harus sama persis (TARO MILK CHEESE != BANANA STEAM CAKE)
+   * 2. Strength MG menjadi penentu rekomendasi final
+   * 3. SAMPLE / non-SAMPLE mengikuti identitas produk sumber
+   *
+   * Produk varian sama tetapi strength berbeda boleh tetap diprioritaskan
+   * di daftar, namun TIDAK diberi tanda rekomendasi ★.
    */
   const normalizeResultProductMatch = value =>
     String(value || '')
       .toUpperCase()
-      .replace(/\b(BOTL|LBL|BULK|READY|LABELING|SAMPLE)\b/g, ' ')
+      .replace(/\b(BOTL|LBL|BULK|READY|LABELING)\b/g, ' ')
+      .replace(/\b\d+(?:[.,]\d+)?\s*ML\b/g, ' ')
       .replace(/[^A-Z0-9]+/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
 
-  const sourceResultTokens = useMemo(() => {
-    const sourceText = normalizeResultProductMatch(
-      form.source_product_name
-    );
-
-    const brandTokens = new Set(
+  const resultBrandTokens = useMemo(
+    () => new Set(
       (brands || [])
         .map(brand => normalizeResultProductMatch(brand?.name))
         .filter(Boolean)
+    ),
+    [brands]
+  );
+
+  const parseResultProductIdentity = value => {
+    const raw = normalizeResultProductMatch(value);
+
+    const strengthMatch = raw.match(
+      /\b(\d+(?:[.,]\d+)?)\s*MG\b/
     );
 
-    return sourceText
+    const strength = strengthMatch
+      ? `${String(strengthMatch[1]).replace(',', '.')}MG`
+      : (raw.includes('SALT') ? 'SALT' : '');
+
+    const isSample = /\bSAMPLE\b/.test(raw);
+
+    const variant = raw
+      .replace(/\bSAMPLE\b/g, ' ')
+      .replace(/\b\d+(?:[.,]\d+)?\s*MG\b/g, ' ')
+      .replace(/\b(SALT|FREEBASE)\b/g, ' ')
       .split(' ')
       .filter(token =>
         token &&
         token.length >= 2 &&
-        !brandTokens.has(token)
-      );
-  }, [form.source_product_name, brands]);
+        !resultBrandTokens.has(token)
+      )
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
 
-  const resultProductRecommendationScore = product => {
+    return {
+      variant,
+      strength,
+      isSample,
+    };
+  };
+
+  const sourceResultIdentity = useMemo(
+    () => parseResultProductIdentity(
+      form.source_product_name
+    ),
+    [
+      form.source_product_name,
+      resultBrandTokens,
+    ]
+  );
+
+  const resultProductRecommendation = product => {
     if (
       form.labeling_mode !== 'maklon' ||
-      !sourceResultTokens.length
+      !sourceResultIdentity.variant
     ) {
-      return 0;
+      return {
+        score: 0,
+        recommended: false,
+      };
     }
 
-    const productText = normalizeResultProductMatch(
-      product?.name
-    );
+    const candidate =
+      parseResultProductIdentity(
+        product?.name
+      );
 
-    const matched = sourceResultTokens.filter(
-      token => productText.includes(token)
-    );
+    const sameVariant =
+      candidate.variant ===
+      sourceResultIdentity.variant;
 
-    let score = matched.length * 10;
-
-    if (matched.length === sourceResultTokens.length) {
-      score += 100;
+    if (!sameVariant) {
+      return {
+        score: 0,
+        recommended: false,
+      };
     }
 
-    return score;
+    const sameStrength =
+      !!sourceResultIdentity.strength &&
+      candidate.strength ===
+        sourceResultIdentity.strength;
+
+    const sameSampleType =
+      candidate.isSample ===
+      sourceResultIdentity.isSample;
+
+    const recommended =
+      sameVariant &&
+      sameStrength &&
+      sameSampleType;
+
+    return {
+      score:
+        recommended
+          ? 300
+          : sameStrength
+            ? 200
+            : 100,
+      recommended,
+    };
   };
 
   const resultProducts = useMemo(() => {
