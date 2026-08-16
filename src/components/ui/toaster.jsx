@@ -16,6 +16,7 @@ const iconByType = {
   warning: <AlertTriangle className="w-5 h-5 text-amber-500" />,
   info: <Info className="w-5 h-5 text-blue-500" />,
 };
+
 const barByType = {
   success: "bg-emerald-500",
   error: "bg-red-500",
@@ -23,23 +24,54 @@ const barByType = {
   info: "bg-blue-500",
 };
 
-function ToastItem({ id, title, description, type, duration, ...props }) {
+function ToastItem({
+  id,
+  title,
+  description,
+  type,
+  duration,
+  persistent = false,
+  ...props
+}) {
   const [progress, setProgress] = useState(100);
-  const rafRef = useRef();
+  const rafRef = useRef(null);
   const startRef = useRef(Date.now());
 
   useEffect(() => {
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+
+    if (persistent) {
+      setProgress(100);
+      return undefined;
+    }
+
+    const effectiveDuration = Number(duration) > 0 ? Number(duration) : 3000;
+
     startRef.current = Date.now();
     setProgress(100);
+
     const tick = () => {
       const elapsed = Date.now() - startRef.current;
-      const pct = Math.max(0, 100 - (elapsed / (duration || 3000)) * 100);
+      const pct = Math.max(0, 100 - (elapsed / effectiveDuration) * 100);
       setProgress(pct);
-      if (pct > 0) rafRef.current = requestAnimationFrame(tick);
+
+      if (pct > 0) {
+        rafRef.current = requestAnimationFrame(tick);
+      }
     };
+
     rafRef.current = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafRef.current);
-  }, [duration, id]);
+
+    return () => {
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
+  }, [duration, id, persistent]);
 
   return (
     <Toast {...props}>
@@ -50,19 +82,24 @@ function ToastItem({ id, title, description, type, duration, ...props }) {
           {description && <ToastDescription>{description}</ToastDescription>}
         </div>
       </div>
+
       <ToastClose onClick={() => dismissToast(id)} />
-      <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-black/5 overflow-hidden">
-        <div
-          className={`h-full transition-none ${barByType[type] || barByType.info}`}
-          style={{ width: `${progress}%` }}
-        />
-      </div>
+
+      {!persistent && (
+        <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-black/5 overflow-hidden">
+          <div
+            className={`h-full transition-none ${barByType[type] || barByType.info}`}
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+      )}
     </Toast>
   );
 }
 
 export function Toaster() {
   const { toasts } = useToast();
+
   return (
     <ToastProvider>
       {toasts.map((t) => (
