@@ -379,7 +379,7 @@ export default function Layout() {
                   onClick={() => setNotificationOpen(false)}
                 />
 
-                <div className="absolute right-0 top-11 z-50 w-[360px] max-w-[calc(100vw-24px)] overflow-hidden rounded-lg border border-border bg-card shadow-xl">
+                <div className="absolute right-0 top-11 z-[100] w-[360px] max-w-[calc(100vw-24px)] overflow-hidden rounded-lg border border-border bg-white dark:bg-slate-950 shadow-2xl">
                   <div className="flex items-center justify-between border-b border-border px-3.5 py-3">
                     <div>
                       <div className="text-[13px] font-semibold">
