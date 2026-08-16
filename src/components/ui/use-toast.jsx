@@ -8,8 +8,10 @@ const DURATION_BY_TYPE = {
   success: 3000,
   info: 3000,
   warning: 4000,
-  error: 5000,
 };
+
+// DEV v3.7: destructive/error toast remains until manual close.
+const PERSISTENT_TYPES = new Set(["error"]);
 
 const actionTypes = {
   ADD_TOAST: "ADD_TOAST",
@@ -25,29 +27,49 @@ function genId() {
 }
 
 const toastTimeouts = new Map();
+const dismissTimerKey = (toastId) => `dismiss-${toastId}`;
+const removeTimerKey = (toastId) => `remove-${toastId}`;
+
+const clearToastTimer = (key) => {
+  const timer = toastTimeouts.get(key);
+  if (!timer) return;
+  clearTimeout(timer);
+  toastTimeouts.delete(key);
+};
 
 const addToRemoveQueue = (toastId) => {
-  if (toastTimeouts.has(toastId)) return;
+  const key = removeTimerKey(toastId);
+  if (toastTimeouts.has(key)) return;
+
   const timeout = setTimeout(() => {
-    toastTimeouts.delete(toastId);
+    toastTimeouts.delete(key);
     dispatch({ type: actionTypes.REMOVE_TOAST, toastId });
   }, TOAST_REMOVE_DELAY);
-  toastTimeouts.set(toastId, timeout);
+
+  toastTimeouts.set(key, timeout);
 };
 
 export const reducer = (state, action) => {
   switch (action.type) {
     case actionTypes.ADD_TOAST:
-      return { ...state, toasts: [action.toast, ...state.toasts].slice(0, TOAST_LIMIT) };
+      return {
+        ...state,
+        toasts: [action.toast, ...state.toasts].slice(0, TOAST_LIMIT),
+      };
+
     case actionTypes.UPDATE_TOAST:
       return {
         ...state,
-        toasts: state.toasts.map((t) => (t.id === action.toast.id ? { ...t, ...action.toast } : t)),
+        toasts: state.toasts.map((t) =>
+          t.id === action.toast.id ? { ...t, ...action.toast } : t
+        ),
       };
+
     case actionTypes.DISMISS_TOAST: {
       const { toastId } = action;
       if (toastId) addToRemoveQueue(toastId);
       else state.toasts.forEach((t) => addToRemoveQueue(t.id));
+
       return {
         ...state,
         toasts: state.toasts.map((t) =>
@@ -55,9 +77,14 @@ export const reducer = (state, action) => {
         ),
       };
     }
+
     case actionTypes.REMOVE_TOAST:
       if (action.toastId === undefined) return { ...state, toasts: [] };
-      return { ...state, toasts: state.toasts.filter((t) => t.id !== action.toastId) };
+      return {
+        ...state,
+        toasts: state.toasts.filter((t) => t.id !== action.toastId),
+      };
+
     default:
       return state;
   }
@@ -68,14 +95,14 @@ let memoryState = { toasts: [] };
 
 function dispatch(action) {
   memoryState = reducer(memoryState, action);
-  listeners.forEach((l) => l(memoryState));
+  listeners.forEach((listener) => listener(memoryState));
 }
 
 function subscribe(listener) {
   listeners.push(listener);
   return () => {
-    const i = listeners.indexOf(listener);
-    if (i > -1) listeners.splice(i, 1);
+    const index = listeners.indexOf(listener);
+    if (index > -1) listeners.splice(index, 1);
   };
 }
 
@@ -84,27 +111,49 @@ function getSnapshot() {
 }
 
 /**
- * Show a toast. Auto-dismisses after duration (success/info 3s, warning 4s, error 5s).
- * Pass { type: 'success'|'info'|'warning'|'error' } or { variant: 'destructive' } (=> error).
- * Dedup: an identical open toast (same title+description+type) is not added twice.
+ * DEV v3.7 behavior:
+ * - success: 3s
+ * - info: 3s
+ * - warning: 4s
+ * - error/destructive: persistent until manually closed
+ *
+ * Dedup: identical open toast (same title + description + type) is not added twice.
  */
 export function toast({ type, variant, duration, title, description, ...rest } = {}) {
   const resolvedType = type || (variant === "destructive" ? "error" : "success");
+  const persistent = PERSISTENT_TYPES.has(resolvedType);
   const id = genId();
-  const dur = duration ?? DURATION_BY_TYPE[resolvedType] ?? 3000;
 
-  // Dedup against currently open toasts
+  const dur = persistent
+    ? null
+    : duration ?? DURATION_BY_TYPE[resolvedType] ?? 3000;
+
   const dup = memoryState.toasts.find(
-    (t) => t.open && t.title === title && t.description === description && t.type === resolvedType
+    (t) =>
+      t.open &&
+      t.title === title &&
+      t.description === description &&
+      t.type === resolvedType
   );
-  if (dup) return { id: dup.id, dismiss: () => dismiss(dup.id), update: () => {} };
+
+  if (dup) {
+    return {
+      id: dup.id,
+      dismiss: () => dismiss(dup.id),
+      update: () => {},
+    };
+  }
 
   const dismissFn = () => {
-    const t = toastTimeouts.get(`dismiss-${id}`);
-    if (t) { clearTimeout(t); toastTimeouts.delete(`dismiss-${id}`); }
+    clearToastTimer(dismissTimerKey(id));
     dispatch({ type: actionTypes.DISMISS_TOAST, toastId: id });
   };
-  const update = (props) => dispatch({ type: actionTypes.UPDATE_TOAST, toast: { ...props, id } });
+
+  const update = (props) =>
+    dispatch({
+      type: actionTypes.UPDATE_TOAST,
+      toast: { ...props, id },
+    });
 
   dispatch({
     type: actionTypes.ADD_TOAST,
@@ -116,25 +165,31 @@ export function toast({ type, variant, duration, title, description, ...rest } =
       type: resolvedType,
       variant: resolvedType === "error" ? "destructive" : "default",
       duration: dur,
+      persistent,
       open: true,
-      onOpenChange: (open) => { if (!open) dismissFn(); },
+      onOpenChange: (open) => {
+        if (!open) dismissFn();
+      },
     },
   });
 
-  // Auto-dismiss timer (cleaned up in dismissFn)
-  const timer = setTimeout(() => { dismissFn(); }, dur);
-  toastTimeouts.set(`dismiss-${id}`, timer);
+  // Persistent error/destructive toast deliberately has no auto-dismiss timer.
+  if (!persistent) {
+    const timer = setTimeout(() => {
+      dismissFn();
+    }, dur);
+    toastTimeouts.set(dismissTimerKey(id), timer);
+  }
 
   return { id, dismiss: dismissFn, update };
 }
 
 export function dismiss(toastId) {
-  const t = toastTimeouts.get(`dismiss-${toastId}`);
-  if (t) { clearTimeout(t); toastTimeouts.delete(`dismiss-${toastId}`); }
+  clearToastTimer(dismissTimerKey(toastId));
   dispatch({ type: actionTypes.DISMISS_TOAST, toastId });
 }
 
 export function useToast() {
   const state = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-  return { ...state, toast, dismiss: (toastId) => dispatch({ type: actionTypes.DISMISS_TOAST, toastId }) };
+  return { ...state, toast, dismiss };
 }
