@@ -113,6 +113,7 @@ export default function Dashboard() {
     dashboardSales: can('dashboard_sales'),
     dashboardReceivables: can('dashboard_receivables'),
     dashboardActivity: can('dashboard_activity'),
+    dashboardShortcuts: can('dashboard_shortcuts'),
 
     materials: can('master_materials'),
     stockCard: can('stock_card'),
@@ -612,7 +613,7 @@ export default function Dashboard() {
       : null,
   ].filter(Boolean);
 
-  const quickActions = [
+  const quickActions = access.dashboardShortcuts ? [
     can('production', 'create')
       ? {
           icon: Factory,
@@ -684,7 +685,7 @@ export default function Dashboard() {
           color: 'bg-blue-50 text-blue-600'
         }
       : null,
-  ].filter(Boolean);
+  ].filter(Boolean) : [];
 
   return (
     <div className="p-5 max-w-[1400px] mx-auto">
