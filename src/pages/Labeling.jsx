@@ -643,11 +643,18 @@ export default function Labeling() {
           product.product_type !== 'label' &&
           product.is_active !== false
       )
-      .map(product => ({
-        ...product,
-        _recommendationScore:
-          resultProductRecommendationScore(product),
-      }))
+      .map(product => {
+        const recommendation =
+          resultProductRecommendation(product);
+
+        return {
+          ...product,
+          _recommendationScore:
+            recommendation.score,
+          _isRecommended:
+            recommendation.recommended,
+        };
+      })
       .sort((a, b) =>
         b._recommendationScore - a._recommendationScore ||
         String(a.name || '').localeCompare(
@@ -658,7 +665,7 @@ export default function Labeling() {
     products,
     form.result_brand_id,
     form.labeling_mode,
-    sourceResultTokens,
+    sourceResultIdentity,
   ]);
 
 
@@ -3684,7 +3691,7 @@ export default function Labeling() {
                         key={product.id}
                         value={product.id}
                       >
-                        {product._recommendationScore > 0 ? '★ ' : ''}
+                        {product._isRecommended ? '★ ' : ''}
                         {product.name}
                         {product.bottle_size
                           ? ` · ${product.bottle_size}ml`
