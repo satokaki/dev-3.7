@@ -121,7 +121,9 @@ function getSnapshot() {
  */
 export function toast({ type, variant, duration, title, description, ...rest } = {}) {
   const resolvedType = type || (variant === "destructive" ? "error" : "success");
-  const persistent = PERSISTENT_TYPES.has(resolvedType);
+  // DEV 3.7: semua toast dibuat persistent untuk kebutuhan debugging.
+  // Toast hanya hilang jika user menutupnya secara manual.
+  const persistent = true;
   const id = genId();
 
   const dur = persistent
@@ -173,7 +175,7 @@ export function toast({ type, variant, duration, title, description, ...rest } =
     },
   });
 
-  // Persistent error/destructive toast deliberately has no auto-dismiss timer.
+  // DEV 3.7: seluruh toast persistent dan sengaja tidak memiliki auto-dismiss timer.
   if (!persistent) {
     const timer = setTimeout(() => {
       dismissFn();
