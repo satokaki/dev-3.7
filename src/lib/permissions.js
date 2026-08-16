@@ -74,6 +74,13 @@ export const MENU_CATALOG = [
     actions: ['view']
   },
 
+  {
+    key: 'dashboard_shortcuts',
+    label: 'Dashboard · Shortcut Operasional',
+    group: 'utama',
+    actions: ['view']
+  },
+
   // =========================================================
   // OPERASIONAL
   // =========================================================
