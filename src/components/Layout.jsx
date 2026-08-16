@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Outlet, useLocation, useNavigate, Link } from 'react-router-dom';
 import { base44 } from '@/api/base44Client';
 import {
@@ -51,6 +51,143 @@ export default function Layout() {
   const [masterOpen, setMasterOpen] = useState(
     location.pathname.startsWith('/master')
   );
+
+  /*
+   * v3.7 NOTIFICATION CENTER
+   * Read-only dari AuditLog. Tidak mengubah transaksi atau schema.
+   */
+  const [notificationOpen, setNotificationOpen] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
+  const [notificationError, setNotificationError] = useState('');
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  const canSeeActivityNotifications =
+    hasPermission(user, 'dashboard_activity', 'view');
+
+  const notificationStorageKey =
+    `labpro_notification_last_seen_${user?.id || user?.email || 'user'}`;
+
+  const isFailureNotification = (row) => {
+    const action =
+      String(row?.action || '').toLowerCase();
+
+    return (
+      action.includes('gagal') ||
+      action.includes('failed') ||
+      action.includes('failure') ||
+      action.includes('error') ||
+      action.includes('rollback')
+    );
+  };
+
+  const notificationTime = (value) => {
+    if (!value) return '';
+
+    try {
+      return new Intl.DateTimeFormat('id-ID', {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      }).format(new Date(value));
+    } catch {
+      return String(value);
+    }
+  };
+
+  const loadNotifications = useCallback(async () => {
+    if (!user || !canSeeActivityNotifications) {
+      setNotifications([]);
+      setUnreadCount(0);
+      setNotificationError('');
+      return;
+    }
+
+    setNotificationsLoading(true);
+    setNotificationError('');
+
+    try {
+      const rows =
+        await base44.entities.AuditLog.list(
+          '-action_time',
+          50
+        );
+
+      const safeRows = rows || [];
+      setNotifications(safeRows);
+
+      const lastSeenRaw =
+        window.localStorage.getItem(
+          notificationStorageKey
+        );
+
+      const lastSeen =
+        lastSeenRaw
+          ? new Date(lastSeenRaw).getTime()
+          : 0;
+
+      const unread =
+        safeRows.filter(row => {
+          const time =
+            new Date(
+              row.action_time ||
+              row.created_date ||
+              0
+            ).getTime();
+
+          return (
+            Number.isFinite(time) &&
+            time > lastSeen
+          );
+        }).length;
+
+      setUnreadCount(unread);
+    } catch (error) {
+      setNotificationError(
+        error?.message ||
+        'Gagal memuat notifikasi'
+      );
+    } finally {
+      setNotificationsLoading(false);
+    }
+  }, [
+    user,
+    canSeeActivityNotifications,
+    notificationStorageKey,
+  ]);
+
+  useEffect(() => {
+    loadNotifications();
+
+    const timer =
+      window.setInterval(
+        loadNotifications,
+        60000
+      );
+
+    return () =>
+      window.clearInterval(timer);
+  }, [loadNotifications]);
+
+  const toggleNotifications = async () => {
+    const nextOpen =
+      !notificationOpen;
+
+    setNotificationOpen(nextOpen);
+
+    if (nextOpen) {
+      await loadNotifications();
+
+      const now =
+        new Date().toISOString();
+
+      window.localStorage.setItem(
+        notificationStorageKey,
+        now
+      );
+
+      setUnreadCount(0);
+    }
+  };
 
   const handleLogout = async () => {
     await base44.auth.logout();
@@ -216,14 +353,175 @@ export default function Layout() {
             </div>
           </div>
 
-          <button
-            type="button"
-            className="p-2 hover:bg-muted rounded-md relative"
-            title="Notifikasi belum diaktifkan"
-            aria-label="Notifikasi"
-          >
-            <Bell className="w-4 h-4 text-muted-foreground" />
-          </button>
+          <div className="relative">
+            <button
+              type="button"
+              onClick={toggleNotifications}
+              className="p-2 hover:bg-muted rounded-md relative"
+              aria-label="Buka notifikasi aktivitas"
+              title="Notifikasi aktivitas"
+            >
+              <Bell className="w-4 h-4 text-muted-foreground" />
+
+              {unreadCount > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 min-w-4 h-4 px-1 flex items-center justify-center rounded-full bg-red-500 text-white text-[9px] font-bold leading-none">
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </span>
+              )}
+            </button>
+
+            {notificationOpen && (
+              <>
+                <button
+                  type="button"
+                  aria-label="Tutup notifikasi"
+                  className="fixed inset-0 z-40 cursor-default"
+                  onClick={() => setNotificationOpen(false)}
+                />
+
+                <div className="absolute right-0 top-11 z-50 w-[360px] max-w-[calc(100vw-24px)] overflow-hidden rounded-lg border border-border bg-card shadow-xl">
+                  <div className="flex items-center justify-between border-b border-border px-3.5 py-3">
+                    <div>
+                      <div className="text-[13px] font-semibold">
+                        Notifikasi Aktivitas
+                      </div>
+                      <div className="text-[10.5px] text-muted-foreground">
+                        Log proses berhasil dan gagal
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={loadNotifications}
+                      disabled={notificationsLoading}
+                      className="text-[11px] font-medium text-primary hover:underline disabled:opacity-50"
+                    >
+                      {notificationsLoading
+                        ? 'Memuat...'
+                        : 'Segarkan'}
+                    </button>
+                  </div>
+
+                  <div className="max-h-[420px] overflow-y-auto">
+                    {!canSeeActivityNotifications ? (
+                      <div className="px-4 py-10 text-center">
+                        <Bell className="mx-auto mb-2 h-6 w-6 text-muted-foreground/50" />
+                        <div className="text-[12.5px] font-medium">
+                          Notifikasi aktivitas tidak tersedia
+                        </div>
+                        <div className="mt-1 text-[11px] text-muted-foreground">
+                          Akun ini tidak memiliki hak akses log aktivitas.
+                        </div>
+                      </div>
+                    ) : notificationError ? (
+                      <div className="px-4 py-8 text-center">
+                        <AlertTriangle className="mx-auto mb-2 h-6 w-6 text-red-500" />
+                        <div className="text-[12.5px] font-medium text-red-600">
+                          Gagal memuat notifikasi
+                        </div>
+                        <div className="mt-1 break-words text-[11px] text-muted-foreground">
+                          {notificationError}
+                        </div>
+                      </div>
+                    ) : notificationsLoading && notifications.length === 0 ? (
+                      <div className="px-4 py-10 text-center text-[12px] text-muted-foreground">
+                        Memuat notifikasi...
+                      </div>
+                    ) : notifications.length === 0 ? (
+                      <div className="px-4 py-10 text-center">
+                        <Bell className="mx-auto mb-2 h-6 w-6 text-muted-foreground/50" />
+                        <div className="text-[12.5px] font-medium">
+                          Belum ada notifikasi
+                        </div>
+                        <div className="mt-1 text-[11px] text-muted-foreground">
+                          Aktivitas berhasil atau gagal akan muncul di sini.
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="divide-y divide-border">
+                        {notifications.map(row => {
+                          const failed =
+                            isFailureNotification(row);
+
+                          return (
+                            <div
+                              key={row.id}
+                              className="px-3.5 py-3 hover:bg-muted/40"
+                            >
+                              <div className="flex items-start gap-2.5">
+                                <div
+                                  className={`mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full ${
+                                    failed
+                                      ? 'bg-red-500'
+                                      : 'bg-emerald-500'
+                                  }`}
+                                />
+
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="truncate text-[12px] font-semibold">
+                                      {row.module || 'Sistem'}
+                                      {' · '}
+                                      {row.action || 'Aktivitas'}
+                                    </div>
+
+                                    <span
+                                      className={`shrink-0 rounded px-1.5 py-0.5 text-[9.5px] font-semibold ${
+                                        failed
+                                          ? 'bg-red-50 text-red-600'
+                                          : 'bg-emerald-50 text-emerald-700'
+                                      }`}
+                                    >
+                                      {failed ? 'GAGAL' : 'BERHASIL'}
+                                    </span>
+                                  </div>
+
+                                  {row.reference_number && (
+                                    <div className="mt-0.5 truncate font-mono text-[10.5px] text-muted-foreground">
+                                      {row.reference_number}
+                                    </div>
+                                  )}
+
+                                  {failed && (
+                                    <div className="mt-1.5 rounded bg-red-50 px-2 py-1.5 text-[10.5px] leading-relaxed text-red-700">
+                                      {row.reason ||
+                                        'Proses gagal. Detail alasan belum dicatat pada log ini.'}
+                                    </div>
+                                  )}
+
+                                  {!failed && row.reason && (
+                                    <div className="mt-1 text-[10.5px] leading-relaxed text-muted-foreground">
+                                      {row.reason}
+                                    </div>
+                                  )}
+
+                                  <div className="mt-1.5 flex items-center justify-between gap-2 text-[9.5px] text-muted-foreground">
+                                    <span className="truncate">
+                                      {row.user_name || 'System'}
+                                    </span>
+                                    <span className="shrink-0">
+                                      {notificationTime(
+                                        row.action_time ||
+                                        row.created_date
+                                      )}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="border-t border-border bg-muted/20 px-3.5 py-2 text-[10px] text-muted-foreground">
+                    Menampilkan maksimal 50 aktivitas terbaru.
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
 
           <div className="flex items-center gap-2.5 pl-3 border-l border-border">
             <div className="text-right hidden sm:block">
