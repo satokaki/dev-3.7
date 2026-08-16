@@ -885,6 +885,40 @@ export default function Bottling() {
       let rollbackOk = true;
       const rollbackErrors = [];
 
+      if (!order?.id) {
+        try {
+          await createAuditLog({
+            module: 'Bottling',
+            action: 'Gagal Preflight',
+            entity_type: 'BottlingOrder',
+            entity_id: '',
+            reference_number: botNumber || '',
+            reason:
+              e?.message ||
+              'Bottling gagal sebelum order dibuat',
+            data_after: {
+              source_product_id:
+                form.source_product_id || '',
+              source_product_name:
+                form.source_product_name || '',
+              output_product_id:
+                form.output_product_id || '',
+              batch_number:
+                form.batch_number || '',
+              bottle_item_id:
+                form.bottle_item_id || '',
+              bottle_count:
+                Number(form.bottle_count) || 0,
+              volume_per_bottle:
+                Number(form.volume_per_bottle) || 0,
+              stock_changed: false,
+            },
+          });
+        } catch {
+          // Audit failure tidak boleh mengubah hasil preflight.
+        }
+      }
+
       if (order?.id) {
         try {
           const referenceRows =
