@@ -216,9 +216,13 @@ export default function Layout() {
             </div>
           </div>
 
-          <button className="p-2 hover:bg-muted rounded-md relative">
+          <button
+            type="button"
+            className="p-2 hover:bg-muted rounded-md relative"
+            title="Notifikasi belum diaktifkan"
+            aria-label="Notifikasi"
+          >
             <Bell className="w-4 h-4 text-muted-foreground" />
-            <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full" />
           </button>
 
           <div className="flex items-center gap-2.5 pl-3 border-l border-border">
