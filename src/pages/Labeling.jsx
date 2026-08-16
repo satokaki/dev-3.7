@@ -508,6 +508,64 @@ export default function Labeling() {
     setShowAllLabels(false);
   };
 
+  /*
+   * v3.7 UI ONLY — MAKLON RESULT PRODUCT RECOMMENDATION
+   * Produk hasil diprioritaskan berdasarkan kemiripan nama produk sumber/BOTL.
+   * Brand/prefix teknis diabaikan saat matching. Tidak auto-select.
+   */
+  const normalizeResultProductMatch = value =>
+    String(value || '')
+      .toUpperCase()
+      .replace(/\b(BOTL|LBL|BULK|READY|LABELING|SAMPLE)\b/g, ' ')
+      .replace(/[^A-Z0-9]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  const sourceResultTokens = useMemo(() => {
+    const sourceText = normalizeResultProductMatch(
+      form.source_product_name
+    );
+
+    const brandTokens = new Set(
+      (brands || [])
+        .map(brand => normalizeResultProductMatch(brand?.name))
+        .filter(Boolean)
+    );
+
+    return sourceText
+      .split(' ')
+      .filter(token =>
+        token &&
+        token.length >= 2 &&
+        !brandTokens.has(token)
+      );
+  }, [form.source_product_name, brands]);
+
+  const resultProductRecommendationScore = product => {
+    if (
+      form.labeling_mode !== 'maklon' ||
+      !sourceResultTokens.length
+    ) {
+      return 0;
+    }
+
+    const productText = normalizeResultProductMatch(
+      product?.name
+    );
+
+    const matched = sourceResultTokens.filter(
+      token => productText.includes(token)
+    );
+
+    let score = matched.length * 10;
+
+    if (matched.length === sourceResultTokens.length) {
+      score += 100;
+    }
+
+    return score;
+  };
+
   const resultProducts = useMemo(() => {
     if (!form.result_brand_id) return [];
 
@@ -518,7 +576,13 @@ export default function Labeling() {
           product.product_type !== 'label' &&
           product.is_active !== false
       )
+      .map(product => ({
+        ...product,
+        _recommendationScore:
+          resultProductRecommendationScore(product),
+      }))
       .sort((a, b) =>
+        b._recommendationScore - a._recommendationScore ||
         String(a.name || '').localeCompare(
           String(b.name || '')
         )
@@ -526,6 +590,8 @@ export default function Labeling() {
   }, [
     products,
     form.result_brand_id,
+    form.labeling_mode,
+    sourceResultTokens,
   ]);
 
 
@@ -3551,6 +3617,7 @@ export default function Labeling() {
                         key={product.id}
                         value={product.id}
                       >
+                        {product._recommendationScore > 0 ? '★ ' : ''}
                         {product.name}
                         {product.bottle_size
                           ? ` · ${product.bottle_size}ml`
