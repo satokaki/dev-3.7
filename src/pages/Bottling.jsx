@@ -264,6 +264,43 @@ export default function Bottling() {
       0
     );
 
+  /*
+   * v3.7 UI PREFLIGHT — BLOCK KNOWN SHORTAGE BEFORE SUBMIT
+   *
+   * Server-side preflight tetap menjadi safety net.
+   * UI hanya mencegah attempt yang sudah pasti gagal berdasarkan
+   * StockBalance yang sudah dimuat pada halaman.
+   */
+  const selectedBottleAvailable =
+    form.bottle_item_id
+      ? Number(
+          bottleStocks[form.bottle_item_id] ||
+          0
+        )
+      : 0;
+
+  const plannedBottleCount =
+    Number(form.bottle_count) || 0;
+
+  const plannedBulkVolume =
+    Number(totalVolume) || 0;
+
+  const visibleBulkAvailable =
+    Number(form.available_bulk) || 0;
+
+  const bottleShortage =
+    !!form.bottle_item_id &&
+    plannedBottleCount > 0 &&
+    plannedBottleCount > selectedBottleAvailable;
+
+  const bulkShortage =
+    !!form.stock_id &&
+    plannedBulkVolume > 0 &&
+    plannedBulkVolume > visibleBulkAvailable;
+
+  const knownPreflightBlocked =
+    bottleShortage || bulkShortage;
+
   const handleSubmit = async () => {
     if (
       !form.stock_id ||
@@ -1702,6 +1739,36 @@ export default function Bottling() {
                 </div>
               </div>
 
+              {bottleShortage && (
+                <div className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2.5 text-[11.5px] text-red-700">
+                  <span className="font-semibold">Stok botol tidak cukup.</span>
+                  {' '}Tersedia{' '}
+                  <span className="font-semibold tabular-nums">
+                    {selectedBottleAvailable.toLocaleString('id-ID')}
+                  </span>
+                  , dibutuhkan{' '}
+                  <span className="font-semibold tabular-nums">
+                    {plannedBottleCount.toLocaleString('id-ID')}
+                  </span>
+                  . Kurangi jumlah bottling atau tambah stok botol sebelum proses.
+                </div>
+              )}
+
+              {bulkShortage && (
+                <div className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2.5 text-[11.5px] text-red-700">
+                  <span className="font-semibold">Bulk tidak cukup.</span>
+                  {' '}Tersedia{' '}
+                  <span className="font-semibold tabular-nums">
+                    {visibleBulkAvailable.toLocaleString('id-ID')} ml
+                  </span>
+                  , dibutuhkan{' '}
+                  <span className="font-semibold tabular-nums">
+                    {plannedBulkVolume.toLocaleString('id-ID')} ml
+                  </span>
+                  . Kurangi jumlah botol atau pilih batch bulk lain.
+                </div>
+              )}
+
               <div className="mt-3">
                 <Label className="text-[12.5px] mb-1">
                   Catatan
@@ -1743,7 +1810,14 @@ export default function Bottling() {
             <Button
               type="button"
               onClick={handleSubmit}
-              disabled={submitting}
+              disabled={submitting || knownPreflightBlocked}
+              title={
+                bottleShortage
+                  ? `Stok botol kurang: tersedia ${selectedBottleAvailable}, dibutuhkan ${plannedBottleCount}`
+                  : bulkShortage
+                    ? `Bulk kurang: tersedia ${visibleBulkAvailable} ml, dibutuhkan ${plannedBulkVolume} ml`
+                    : undefined
+              }
             >
               {submitting
                 ? 'Memproses...'
